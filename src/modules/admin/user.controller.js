@@ -10,6 +10,12 @@ const { successResponse, errorResponse } = require('../../utils/response');
 // Get all users (for admin)
 const getAllUsers = async (req, res) => {
   try {
+    console.log('[getAllUsers] Request received:', {
+      query: req.query,
+      adminId: req.adminId,
+      adminRole: req.adminRole,
+    });
+
     const { status, gender, search, page = 1, limit = 20 } = req.query;
 
     const whereClause = {};
@@ -24,7 +30,7 @@ const getAllUsers = async (req, res) => {
       whereClause.gender = gender;
     }
 
-    // Search filter
+    // Search filter - use Op.iLike for PostgreSQL (case-insensitive)
     if (search) {
       whereClause[Op.or] = [
         { name: { [Op.iLike]: `%${search}%` } },
@@ -35,6 +41,12 @@ const getAllUsers = async (req, res) => {
     }
 
     const offset = (parseInt(page) - 1) * parseInt(limit);
+
+    console.log('[getAllUsers] Query parameters:', {
+      whereClause,
+      limit: parseInt(limit),
+      offset,
+    });
 
     const { count, rows } = await User.findAndCountAll({
       where: whereClause,
@@ -48,6 +60,11 @@ const getAllUsers = async (req, res) => {
       order: [['createdAt', 'DESC']],
       limit: parseInt(limit),
       offset: offset,
+    });
+
+    console.log('[getAllUsers] Query successful:', {
+      count,
+      rowsCount: rows.length,
     });
 
     // Format response
@@ -86,9 +103,16 @@ const getAllUsers = async (req, res) => {
       },
     });
   } catch (error) {
+    console.error('[getAllUsers] Error:', {
+      message: error.message,
+      stack: error.stack,
+      name: error.name,
+    });
+    
     res.status(500).json({
       success: false,
-      message: error.message,
+      message: error.message || 'Failed to fetch users',
+      error: process.env.NODE_ENV === 'development' ? error.stack : undefined,
     });
   }
 };

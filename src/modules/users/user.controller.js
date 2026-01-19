@@ -205,6 +205,9 @@ const saveBasicDetails = async (req, res) => {
       currency,
       annualIncome,
       familyStatus,
+      familyType,
+      familyValues,
+      aboutFamily,
       pincode,
       district,
     } = req.body;
@@ -254,6 +257,9 @@ const saveBasicDetails = async (req, res) => {
       currency,
       annualIncome,
       familyStatus,
+      familyType,
+      familyValues,
+      aboutFamily,
     };
 
     // Try to find or create basic detail record

@@ -26,15 +26,45 @@ const transporter = nodemailer.createTransport({
     logger: false,
 });
 
-// Verify connection on startup (optional, can be removed if causing issues)
+// Verify connection on startup with detailed logging
 if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+    console.log('🔍 Verifying email transporter configuration...');
+    console.log('   EMAIL_USER:', process.env.EMAIL_USER);
+    console.log('   EMAIL_PASS:', process.env.EMAIL_PASS ? '***SET***' : 'NOT SET');
+    
     transporter.verify((error, success) => {
         if (error) {
-            console.error('❌ Email transporter verification failed:', error.message);
+            console.error('═══════════════════════════════════════════════════════');
+            console.error('❌ EMAIL TRANSPORTER VERIFICATION FAILED');
+            console.error('═══════════════════════════════════════════════════════');
+            console.error('Error:', error.message);
+            console.error('Code:', error.code);
+            console.error('Command:', error.command);
+            
+            if (error.code === 'EAUTH') {
+                console.error('⚠️  AUTHENTICATION FAILED:');
+                console.error('   - Verify EMAIL_USER is correct');
+                console.error('   - Verify EMAIL_PASS is an App Password (not regular password)');
+                console.error('   - Check if 2-Step Verification is enabled');
+                console.error('   - Generate new App Password: https://myaccount.google.com/apppasswords');
+            } else if (error.code === 'ECONNECTION' || error.code === 'ETIMEDOUT') {
+                console.error('⚠️  CONNECTION FAILED:');
+                console.error('   - Check server internet connectivity');
+                console.error('   - Verify firewall allows SMTP ports (587, 465)');
+                console.error('   - Check if Gmail SMTP is accessible');
+            }
+            console.error('═══════════════════════════════════════════════════════');
         } else {
-            console.log('✅ Email transporter ready');
+            console.log('✅ Email transporter verified and ready');
+            console.log('   Service: Gmail SMTP');
+            console.log('   User:', process.env.EMAIL_USER);
         }
     });
+} else {
+    console.warn('⚠️  Email transporter not configured:');
+    console.warn('   EMAIL_USER:', process.env.EMAIL_USER || 'NOT SET');
+    console.warn('   EMAIL_PASS:', process.env.EMAIL_PASS ? 'SET' : 'NOT SET');
+    console.warn('   Email OTP functionality will not work');
 }
 
 module.exports = transporter;

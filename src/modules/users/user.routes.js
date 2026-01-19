@@ -90,6 +90,9 @@ router.post(
     body('currency').optional().trim(),
     body('annualIncome').optional().trim(),
     body('familyStatus').optional().trim(),
+    body('familyType').optional().trim(),
+    body('familyValues').optional().trim(),
+    body('aboutFamily').optional().trim(),
     validate,
   ],
   saveBasicDetails

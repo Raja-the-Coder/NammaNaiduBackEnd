@@ -438,13 +438,19 @@ const sendOtp = async (req, res) => {
         await otpRecord.save();
       }
 
-      // Send OTP via email using Nodemailer (asynchronously, non-blocking)
-      // Don't await - send response immediately and let email send in background
+      // Send OTP via email using Nodemailer
       if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
         console.warn('⚠️  EMAIL_USER or EMAIL_PASS not configured. Email OTP will not be sent.');
         console.warn('   Please set EMAIL_USER and EMAIL_PASS in your .env file');
+        console.warn('   EMAIL_USER:', process.env.EMAIL_USER ? 'SET' : 'NOT SET');
+        console.warn('   EMAIL_PASS:', process.env.EMAIL_PASS ? 'SET' : 'NOT SET');
         console.log('📧 OTP generated but email not sent. OTP:', otpCode);
       } else {
+        console.log('📧 Attempting to send OTP email...');
+        console.log('   From:', process.env.EMAIL_USER);
+        console.log('   To:', mailid);
+        console.log('   OTP:', otpCode);
+        
         // Create email sending function with timeout protection
         const sendEmailWithTimeout = async () => {
           const timeoutPromise = new Promise((_, reject) => {
@@ -475,19 +481,43 @@ const sendOtp = async (req, res) => {
         };
 
         // Send email asynchronously without blocking the response
+        // But log errors more prominently for server debugging
         sendEmailWithTimeout()
           .then((emailResult) => {
             console.log('✅ OTP email sent successfully!');
             console.log('   Message ID:', emailResult.messageId);
+            console.log('   Response:', emailResult.response);
             console.log('   To:', mailid);
             console.log('   OTP:', otpCode);
           })
           .catch((emailError) => {
-            console.error('❌ Error sending OTP email (background):');
-            console.error('   Error:', emailError.message);
-            console.error('   Code:', emailError.code);
-            console.error('   To:', mailid);
-            console.error('   OTP (for testing):', otpCode);
+            // Enhanced error logging for server debugging
+            console.error('═══════════════════════════════════════════════════════');
+            console.error('❌ ERROR SENDING OTP EMAIL');
+            console.error('═══════════════════════════════════════════════════════');
+            console.error('Error Message:', emailError.message);
+            console.error('Error Code:', emailError.code);
+            console.error('Error Stack:', emailError.stack);
+            console.error('To Email:', mailid);
+            console.error('From Email:', process.env.EMAIL_USER);
+            console.error('OTP (for testing):', otpCode);
+            
+            // Check for common Gmail errors
+            if (emailError.code === 'EAUTH') {
+              console.error('⚠️  AUTHENTICATION ERROR:');
+              console.error('   - Check if EMAIL_USER and EMAIL_PASS are correct');
+              console.error('   - Verify App Password is valid (not regular password)');
+              console.error('   - Ensure 2-Step Verification is enabled in Google Account');
+            } else if (emailError.code === 'ECONNECTION' || emailError.code === 'ETIMEDOUT') {
+              console.error('⚠️  CONNECTION ERROR:');
+              console.error('   - Check server internet connection');
+              console.error('   - Verify firewall allows SMTP (port 587/465)');
+              console.error('   - Check if Gmail SMTP is accessible from server');
+            } else if (emailError.code === 'EMESSAGE') {
+              console.error('⚠️  MESSAGE ERROR:');
+              console.error('   - Check email format and content');
+            }
+            console.error('═══════════════════════════════════════════════════════');
             // Email failure doesn't affect the API response
             // OTP is already stored in database and returned to user
           });

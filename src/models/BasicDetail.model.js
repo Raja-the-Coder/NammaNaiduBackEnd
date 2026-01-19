@@ -92,6 +92,18 @@ const BasicDetail = sequelize.define(
       type: DataTypes.STRING,
       allowNull: true,
     },
+    familyType: {
+      type: DataTypes.STRING,
+      allowNull: true,
+    },
+    familyValues: {
+      type: DataTypes.STRING,
+      allowNull: true,
+    },
+    aboutFamily: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+    },
     pincode: {
       type: DataTypes.STRING,
       allowNull: true,
