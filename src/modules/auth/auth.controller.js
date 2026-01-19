@@ -45,11 +45,31 @@ const register = async (req, res) => {
       phone,
     });
 
+    // Generate OTP for email verification
+    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000);
+
+    await Otp.upsert({
+      email,
+      code: otpCode,
+      expiresAt,
+      verified: false,
+      payload: { name },
+    });
+
+    // Send OTP via email
+    await transporter.sendMail({
+      from: process.env.EMAIL_USER,
+      to: email,
+      subject: 'Your Email OTP Verification Code',
+      html: `<h2>Your OTP is ${otpCode}</h2><p>Valid for ${OTP_EXPIRY_MINUTES} minutes.</p>`,
+    });
+
     const token = generateToken(user.accountId);
 
     res.status(201).json({
       success: true,
-      message: 'User registered successfully',
+      message: 'User registered successfully, OTP sent to email',
       data: {
         user: {
           accountId: user.accountId,
@@ -202,19 +222,32 @@ const login = async (req, res) => {
 
 const sendRegistrationOtp = async (req, res) => {
   try {
-    const { name, gender, mobile, countryCode = '+91', profileFor } = req.body;
+    const { name, gender, mobile, countryCode = '+91', profileFor, email } = req.body;
+
+    // Validate email presence
+    if (!email) {
+      return res.status(400).json({ message: 'Email is required' });
+    }
 
     const phone = formatPhone(countryCode, mobile);
 
-    const existingUser = await User.findOne({ where: { phone } });
-    if (existingUser) {
+    // Check if mobile already registered
+    const existingPhoneUser = await User.findOne({ where: { phone } });
+    if (existingPhoneUser) {
       return res.status(400).json({ message: 'Mobile number is already registered' });
+    }
+
+    // Check if email already registered
+    const existingEmailUser = await User.findOne({ where: { email } });
+    if (existingEmailUser) {
+      return res.status(400).json({ message: 'Email is already registered' });
     }
 
     const expiresAt = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000);
 
     await Otp.upsert({
       phone,
+      email,
       code: OTP_STATIC_CODE,
       expiresAt,
       verified: false,
@@ -344,9 +377,9 @@ const firebaseLogin = async (req, res) => {
     } = req.body;
 
     if (!idToken) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: 'Firebase ID token is required' 
+        message: 'Firebase ID token is required'
       });
     }
 

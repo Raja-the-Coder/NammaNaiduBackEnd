@@ -14,6 +14,11 @@ const Otp = sequelize.define(
       allowNull: false,
       unique: true,
     },
+    email: {
+      type: DataTypes.STRING,
+      allowNull: true,
+      unique: false,
+    },
     code: {
       type: DataTypes.STRING(10),
       allowNull: false,
