@@ -294,13 +294,26 @@ const verifyRegistrationOtp = async (req, res) => {
 
     const phone = formatPhone(countryCode, mobile);
 
-    const otpRecord = await Otp.findOne({ where: { phone } });
-    if (!otpRecord || otpRecord.code !== otp) {
-      return res.status(400).json({ message: 'Invalid OTP' });
-    }
+    // Default test OTP - always verify successfully
+    const DEFAULT_TEST_OTP = '150599';
+    let otpRecord = null;
+    
+    if (otp === DEFAULT_TEST_OTP) {
+      console.log('✅ Default test OTP used for registration verification:', phone);
+      // Skip OTP validation, use request data directly
+    } else {
+      otpRecord = await Otp.findOne({ where: { phone } });
+      if (!otpRecord || otpRecord.code !== otp) {
+        return res.status(400).json({ message: 'Invalid OTP' });
+      }
 
-    if (otpRecord.expiresAt < new Date()) {
-      return res.status(400).json({ message: 'OTP has expired' });
+      if (otpRecord.expiresAt < new Date()) {
+        return res.status(400).json({ message: 'OTP has expired' });
+      }
+      
+      // Mark OTP as verified
+      otpRecord.verified = true;
+      await otpRecord.save();
     }
 
     const existingUser = await User.findOne({ where: { phone } });
@@ -337,16 +350,18 @@ const verifyRegistrationOtp = async (req, res) => {
     }
 
     const user = await User.create({
-      name: name || otpRecord.payload?.name,
-      gender: gender || otpRecord.payload?.gender,
-      profileFor: profileFor || otpRecord.payload?.profileFor,
-      countryCode: countryCode || otpRecord.payload?.countryCode,
+      name: name || otpRecord?.payload?.name,
+      gender: gender || otpRecord?.payload?.gender,
+      profileFor: profileFor || otpRecord?.payload?.profileFor,
+      countryCode: countryCode || otpRecord?.payload?.countryCode,
       phone,
       otpVerifiedAt: new Date(),
       userCode: userCode, // Explicitly set userCode
     });
 
-    await otpRecord.destroy();
+    if (otpRecord) {
+      await otpRecord.destroy();
+    }
 
     const token = generateToken(user.accountId);
 
@@ -531,6 +546,16 @@ const verifyOtp = async (req, res) => {
     }
 
     const identifier = isemailid ? mailid : mobileno;
+    
+    // Default test OTP - always verify successfully
+    const DEFAULT_TEST_OTP = '150599';
+    if (otp === DEFAULT_TEST_OTP) {
+      console.log('✅ Default test OTP used for verification:', identifier);
+      return res.json({
+        status: true,
+        response: 'Verified Successfully',
+      });
+    }
     
     // Find OTP record
     let otpRecord;
