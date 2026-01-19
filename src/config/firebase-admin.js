@@ -25,12 +25,12 @@ const initializeFirebaseAdmin = () => {
     if (process.env.FIREBASE_SERVICE_ACCOUNT) {
       try {
         let jsonString = process.env.FIREBASE_SERVICE_ACCOUNT.trim();
-        
+
         // Railway can store JSON in different formats:
         // 1. As a single-line string with escaped newlines (\n)
         // 2. As a multiline string with actual newlines
         // 3. As a base64 encoded string (less common)
-        
+
         // Try to parse directly first (handles escaped newlines)
         try {
           serviceAccount = JSON.parse(jsonString);
@@ -57,7 +57,7 @@ const initializeFirebaseAdmin = () => {
             }
           }
         }
-        
+
         console.log('✅ Successfully loaded Firebase service account from environment variable');
       } catch (parseError) {
         console.error('❌ Firebase JSON parse error:', parseError.message);
@@ -69,9 +69,9 @@ const initializeFirebaseAdmin = () => {
       // Try standard paths for local development
       const possiblePaths = [
         path.join(__dirname, 'firebase-service-account.json'),
-        path.resolve(process.cwd(), 'src/config/firebase-service-account.json'),
+        path.resolve(process.cwd(), 'src/config/nammamatrimonyapp-firebase-adminsdk-fbsvc-43d0c67ff2.json'),
       ];
-      
+
       let serviceAccountPath = null;
       for (const possiblePath of possiblePaths) {
         const normalizedPath = path.normalize(possiblePath);
@@ -80,7 +80,7 @@ const initializeFirebaseAdmin = () => {
           break;
         }
       }
-      
+
       if (serviceAccountPath) {
         try {
           const serviceAccountFile = fs.readFileSync(serviceAccountPath, 'utf8');
@@ -165,7 +165,7 @@ const getMessaging = () => {
 const sendNotification = async (fcmToken, notification, data = {}) => {
   try {
     const messaging = getMessaging();
-    
+
     const message = {
       token: fcmToken,
       notification: {
@@ -215,7 +215,7 @@ const sendNotification = async (fcmToken, notification, data = {}) => {
 const sendMulticastNotification = async (fcmTokens, notification, data = {}) => {
   try {
     const messaging = getMessaging();
-    
+
     const message = {
       notification: {
         title: notification.title,
@@ -248,11 +248,11 @@ const sendMulticastNotification = async (fcmTokens, notification, data = {}) => 
     };
 
     const response = await messaging.sendEachForMulticast(message);
-    
+
     if (response.failureCount > 0) {
       console.warn(`Failed to send ${response.failureCount} of ${fcmTokens.length} notifications`);
     }
-    
+
     return response;
   } catch (error) {
     console.error('Error sending multicast notification:', error.message);
@@ -270,7 +270,7 @@ const sendMulticastNotification = async (fcmTokens, notification, data = {}) => 
 const sendTopicNotification = async (topic, notification, data = {}) => {
   try {
     const messaging = getMessaging();
-    
+
     const message = {
       topic: topic,
       notification: {
