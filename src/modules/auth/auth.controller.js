@@ -230,6 +230,7 @@ const sendRegistrationOtp = async (req, res) => {
     }
 
     const phone = formatPhone(countryCode, mobile);
+    console.log('📱 Sending OTP - phone:', phone, 'email:', email);
 
     // Check if mobile already registered
     const existingPhoneUser = await User.findOne({ where: { phone } });
@@ -258,6 +259,7 @@ const sendRegistrationOtp = async (req, res) => {
         countryCode,
       },
     });
+    console.log('✅ OTP record upserted for', { phone, email, expiresAt });
 
     res.json({
       success: true,
@@ -396,13 +398,16 @@ const firebaseLogin = async (req, res) => {
     }
 
     const decoded = await firebaseAuth.verifyIdToken(idToken);
+    console.log('🔐 Decoded Firebase token:', decoded);
 
     const phone = decoded.phone_number;
+    console.log('📞 Phone extracted from token:', phone);
     if (!phone) {
       return res.status(400).json({ message: 'Phone number not found in token' });
     }
 
     let user = await User.findOne({ where: { phone } });
+    console.log('🔎 User lookup by phone:', phone, 'found:', !!user);
     let isNewUser = false;
 
     if (!user) {
