@@ -23,6 +23,7 @@ router.post(
       .trim()
       .matches(/^[0-9]{6,15}$/)
       .withMessage('Mobile number must contain only digits'),
+    body('email').isEmail().withMessage('Please provide a valid email'),
     body('countryCode').optional().trim(),
     body('profileFor').optional().trim(),
     validate,

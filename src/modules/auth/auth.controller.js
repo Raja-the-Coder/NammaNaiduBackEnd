@@ -244,12 +244,14 @@ const sendRegistrationOtp = async (req, res) => {
       return res.status(400).json({ message: 'Email is already registered' });
     }
 
+    // Generate random 6-digit OTP
+    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
     const expiresAt = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000);
 
     await Otp.upsert({
       phone,
       email,
-      code: OTP_STATIC_CODE,
+      code: otpCode,
       expiresAt,
       verified: false,
       payload: {
@@ -259,13 +261,13 @@ const sendRegistrationOtp = async (req, res) => {
         countryCode,
       },
     });
-    console.log('✅ OTP record upserted for', { phone, email, expiresAt });
+    console.log('✅ OTP record upserted for', { phone, email, expiresAt, otp: otpCode });
 
     res.json({
       success: true,
       message: 'OTP sent successfully',
       data: {
-        otp: OTP_STATIC_CODE,
+        otp: otpCode,
         expiresAt,
       },
     });
@@ -397,7 +399,11 @@ const firebaseLogin = async (req, res) => {
       });
     }
 
+    // Log incoming token
+    console.log('🔐 firebaseLogin - received idToken:', idToken);
     const decoded = await firebaseAuth.verifyIdToken(idToken);
+    console.log('🔐 Decoded Firebase token in firebaseLogin:', decoded);
+
     console.log('🔐 Decoded Firebase token:', decoded);
 
     const phone = decoded.phone_number;
