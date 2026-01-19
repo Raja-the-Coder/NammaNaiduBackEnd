@@ -438,15 +438,20 @@ const sendOtp = async (req, res) => {
         await otpRecord.save();
       }
 
-      // Send OTP via email using Nodemailer
-      try {
-        if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-          console.warn('⚠️  EMAIL_USER or EMAIL_PASS not configured. Email OTP will not be sent.');
-          console.warn('   Please set EMAIL_USER and EMAIL_PASS in your .env file');
-          console.log('📧 OTP generated but email not sent. OTP:', otpCode);
-        } else {
-          console.log('📧 Attempting to send OTP email to:', mailid);
-          const emailResult = await transporter.sendMail({
+      // Send OTP via email using Nodemailer (asynchronously, non-blocking)
+      // Don't await - send response immediately and let email send in background
+      if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+        console.warn('⚠️  EMAIL_USER or EMAIL_PASS not configured. Email OTP will not be sent.');
+        console.warn('   Please set EMAIL_USER and EMAIL_PASS in your .env file');
+        console.log('📧 OTP generated but email not sent. OTP:', otpCode);
+      } else {
+        // Create email sending function with timeout protection
+        const sendEmailWithTimeout = async () => {
+          const timeoutPromise = new Promise((_, reject) => {
+            setTimeout(() => reject(new Error('Email sending timeout after 15 seconds')), 15000);
+          });
+
+          const emailPromise = transporter.sendMail({
             from: process.env.EMAIL_USER,
             to: mailid,
             subject: 'Your OTP Verification Code - Namma Naidu',
@@ -465,19 +470,30 @@ const sendOtp = async (req, res) => {
               </div>
             `,
           });
-          console.log('✅ OTP email sent successfully!');
-          console.log('   Message ID:', emailResult.messageId);
-          console.log('   To:', mailid);
-          console.log('   OTP:', otpCode);
-        }
-      } catch (emailError) {
-        console.error('❌ Error sending OTP email:');
-        console.error('   Error:', emailError.message);
-        console.error('   Code:', emailError.code);
-        console.error('   To:', mailid);
-        console.error('   OTP (for testing):', otpCode);
-        // Don't fail the request if email fails, but log the error
-        // The OTP is still stored and returned in the response
+
+          return Promise.race([emailPromise, timeoutPromise]);
+        };
+
+        // Send email asynchronously without blocking the response
+        sendEmailWithTimeout()
+          .then((emailResult) => {
+            console.log('✅ OTP email sent successfully!');
+            console.log('   Message ID:', emailResult.messageId);
+            console.log('   To:', mailid);
+            console.log('   OTP:', otpCode);
+          })
+          .catch((emailError) => {
+            console.error('❌ Error sending OTP email (background):');
+            console.error('   Error:', emailError.message);
+            console.error('   Code:', emailError.code);
+            console.error('   To:', mailid);
+            console.error('   OTP (for testing):', otpCode);
+            // Email failure doesn't affect the API response
+            // OTP is already stored in database and returned to user
+          });
+
+        // Log that email is being sent (non-blocking)
+        console.log('📧 OTP email queued for sending to:', mailid);
       }
     } else {
       // Find or create OTP record for phone
