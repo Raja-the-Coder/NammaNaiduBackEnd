@@ -6,6 +6,8 @@ const {
   sendRegistrationOtp,
   verifyRegistrationOtp,
   firebaseLogin,
+  sendOtp,
+  verifyOtp,
 } = require('./auth.controller');
 const { validate } = require('../../middleware/validation.middleware');
 
@@ -23,7 +25,7 @@ router.post(
       .trim()
       .matches(/^[0-9]{6,15}$/)
       .withMessage('Mobile number must contain only digits'),
-    body('email').isEmail().withMessage('Please provide a valid email'),
+    body('email').optional().isEmail().withMessage('Please provide a valid email'),
     body('countryCode').optional().trim(),
     body('profileFor').optional().trim(),
     validate,
@@ -87,6 +89,44 @@ router.post(
     validate,
   ],
   login
+);
+
+// New OTP endpoints
+router.post(
+  '/otp/send',
+  [
+    body('isemailid').isBoolean().withMessage('isemailid must be a boolean'),
+    body('mobileno')
+      .optional()
+      .trim()
+      .matches(/^\+?[1-9]\d{1,14}$/)
+      .withMessage('Please provide a valid mobile number'),
+    body('mailid')
+      .optional()
+      .isEmail()
+      .withMessage('Please provide a valid email'),
+    validate,
+  ],
+  sendOtp
+);
+
+router.post(
+  '/otp/verify',
+  [
+    body('isemailid').isBoolean().withMessage('isemailid must be a boolean'),
+    body('otp').trim().notEmpty().withMessage('OTP is required'),
+    body('mobileno')
+      .optional()
+      .trim()
+      .matches(/^\+?[1-9]\d{1,14}$/)
+      .withMessage('Please provide a valid mobile number'),
+    body('mailid')
+      .optional()
+      .isEmail()
+      .withMessage('Please provide a valid email'),
+    validate,
+  ],
+  verifyOtp
 );
 
 module.exports = router;

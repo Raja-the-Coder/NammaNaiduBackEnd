@@ -7,6 +7,7 @@ const {
   getFirebaseAdmin,
   initializeFirebaseAdmin,
 } = require('../../config/firebase-admin');
+const transporter = require('../../mailer');
 
 const OTP_STATIC_CODE = process.env.OTP_STATIC_CODE || '12345';
 const OTP_EXPIRY_MINUTES = Number(process.env.OTP_EXPIRY_MINUTES || 10);
@@ -224,13 +225,12 @@ const sendRegistrationOtp = async (req, res) => {
   try {
     const { name, gender, mobile, countryCode = '+91', profileFor, email } = req.body;
 
-    // Validate email presence
-    if (!email) {
-      return res.status(400).json({ message: 'Email is required' });
-    }
-
     const phone = formatPhone(countryCode, mobile);
-    console.log('📱 Sending OTP - phone:', phone, 'email:', email);
+    
+    // Auto-generate email if not provided
+    const userEmail = email || `user_${mobile}@nammamatrimony.app`;
+    
+    console.log('📱 Sending OTP - phone:', phone, 'email:', userEmail);
 
     // Check if mobile already registered
     const existingPhoneUser = await User.findOne({ where: { phone } });
@@ -238,10 +238,12 @@ const sendRegistrationOtp = async (req, res) => {
       return res.status(400).json({ message: 'Mobile number is already registered' });
     }
 
-    // Check if email already registered
-    const existingEmailUser = await User.findOne({ where: { email } });
-    if (existingEmailUser) {
-      return res.status(400).json({ message: 'Email is already registered' });
+    // Check if email already registered (only if provided)
+    if (email) {
+      const existingEmailUser = await User.findOne({ where: { email } });
+      if (existingEmailUser) {
+        return res.status(400).json({ message: 'Email is already registered' });
+      }
     }
 
     // Generate random 6-digit OTP
@@ -250,7 +252,7 @@ const sendRegistrationOtp = async (req, res) => {
 
     await Otp.upsert({
       phone,
-      email,
+      email: userEmail,
       code: otpCode,
       expiresAt,
       verified: false,
@@ -261,7 +263,7 @@ const sendRegistrationOtp = async (req, res) => {
         countryCode,
       },
     });
-    console.log('✅ OTP record upserted for', { phone, email, expiresAt, otp: otpCode });
+    console.log('✅ OTP record upserted for', { phone, email: userEmail, expiresAt, otp: otpCode });
 
     res.json({
       success: true,
@@ -366,6 +368,214 @@ const verifyRegistrationOtp = async (req, res) => {
     res.status(500).json({
       success: false,
       message: error.message,
+    });
+  }
+};
+
+// Send OTP (new API - supports both mobile and email)
+const sendOtp = async (req, res) => {
+  try {
+    const { mobileno, mailid, isemailid } = req.body;
+
+    // Validate input
+    if (!isemailid && !mobileno) {
+      return res.status(400).json({ 
+        status: false,
+        message: 'Mobile number is required when isemailid is false' 
+      });
+    }
+
+    if (isemailid && !mailid) {
+      return res.status(400).json({ 
+        status: false,
+        message: 'Email is required when isemailid is true' 
+      });
+    }
+
+    const identifier = isemailid ? mailid : mobileno;
+    const identifierType = isemailid ? 'email' : 'phone';
+    
+    console.log('📱 Sending OTP - identifier:', identifier, 'type:', identifierType);
+
+    // Generate random 6-digit OTP
+    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000);
+
+    if (isemailid) {
+      // Find or create OTP record for email
+      const [otpRecord, created] = await Otp.findOrCreate({
+        where: { email: mailid },
+        defaults: {
+          email: mailid,
+          phone: null,
+          code: otpCode,
+          expiresAt,
+          verified: false,
+          payload: {},
+        },
+      });
+
+      if (!created) {
+        // Update existing record
+        otpRecord.code = otpCode;
+        otpRecord.expiresAt = expiresAt;
+        otpRecord.verified = false;
+        await otpRecord.save();
+      }
+
+      // Send OTP via email using Nodemailer
+      try {
+        if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+          console.warn('⚠️  EMAIL_USER or EMAIL_PASS not configured. Email OTP will not be sent.');
+          console.warn('   Please set EMAIL_USER and EMAIL_PASS in your .env file');
+          console.log('📧 OTP generated but email not sent. OTP:', otpCode);
+        } else {
+          console.log('📧 Attempting to send OTP email to:', mailid);
+          const emailResult = await transporter.sendMail({
+            from: process.env.EMAIL_USER,
+            to: mailid,
+            subject: 'Your OTP Verification Code - Namma Naidu',
+            html: `
+              <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+                <h2 style="color: #FB34AA;">OTP Verification Code</h2>
+                <p>Hello,</p>
+                <p>Your OTP verification code is:</p>
+                <div style="background-color: #f4f4f4; padding: 20px; text-align: center; margin: 20px 0; border-radius: 8px;">
+                  <h1 style="color: #FB34AA; font-size: 32px; margin: 0; letter-spacing: 5px;">${otpCode}</h1>
+                </div>
+                <p>This OTP is valid for ${OTP_EXPIRY_MINUTES} minutes.</p>
+                <p>If you didn't request this OTP, please ignore this email.</p>
+                <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+                <p style="color: #666; font-size: 12px;">This is an automated message from Namma Naidu Matrimony.</p>
+              </div>
+            `,
+          });
+          console.log('✅ OTP email sent successfully!');
+          console.log('   Message ID:', emailResult.messageId);
+          console.log('   To:', mailid);
+          console.log('   OTP:', otpCode);
+        }
+      } catch (emailError) {
+        console.error('❌ Error sending OTP email:');
+        console.error('   Error:', emailError.message);
+        console.error('   Code:', emailError.code);
+        console.error('   To:', mailid);
+        console.error('   OTP (for testing):', otpCode);
+        // Don't fail the request if email fails, but log the error
+        // The OTP is still stored and returned in the response
+      }
+    } else {
+      // Find or create OTP record for phone
+      const [otpRecord, created] = await Otp.findOrCreate({
+        where: { phone: mobileno },
+        defaults: {
+          phone: mobileno,
+          email: null,
+          code: otpCode,
+          expiresAt,
+          verified: false,
+          payload: {},
+        },
+      });
+
+      if (!created) {
+        // Update existing record
+        otpRecord.code = otpCode;
+        otpRecord.expiresAt = expiresAt;
+        otpRecord.verified = false;
+        await otpRecord.save();
+      }
+    }
+
+    console.log('✅ OTP record upserted for', { identifier, expiresAt, otp: otpCode });
+
+    res.json({
+      status: true,
+      [isemailid ? 'mailid' : 'mobileno']: identifier,
+      otp: otpCode,
+    });
+  } catch (error) {
+    console.error('Error sending OTP:', error);
+    res.status(500).json({
+      status: false,
+      message: error.message,
+    });
+  }
+};
+
+// Verify OTP (new API - supports both mobile and email)
+const verifyOtp = async (req, res) => {
+  try {
+    const { mobileno, mailid, otp, isemailid } = req.body;
+
+    // Validate input
+    if (!otp) {
+      return res.status(400).json({ 
+        status: false,
+        response: 'OTP is required' 
+      });
+    }
+
+    if (!isemailid && !mobileno) {
+      return res.status(400).json({ 
+        status: false,
+        response: 'Mobile number is required when isemailid is false' 
+      });
+    }
+
+    if (isemailid && !mailid) {
+      return res.status(400).json({ 
+        status: false,
+        response: 'Email is required when isemailid is true' 
+      });
+    }
+
+    const identifier = isemailid ? mailid : mobileno;
+    
+    // Find OTP record
+    let otpRecord;
+    if (isemailid) {
+      otpRecord = await Otp.findOne({ where: { email: mailid } });
+    } else {
+      otpRecord = await Otp.findOne({ where: { phone: mobileno } });
+    }
+
+    if (!otpRecord) {
+      return res.status(400).json({ 
+        status: false,
+        response: 'OTP not found. Please request a new OTP.' 
+      });
+    }
+
+    if (otpRecord.code !== otp) {
+      return res.status(400).json({ 
+        status: false,
+        response: 'Invalid OTP' 
+      });
+    }
+
+    if (otpRecord.expiresAt < new Date()) {
+      return res.status(400).json({ 
+        status: false,
+        response: 'OTP has expired. Please request a new OTP.' 
+      });
+    }
+
+    // Mark OTP as verified
+    otpRecord.verified = true;
+    await otpRecord.save();
+
+    console.log('✅ OTP verified for', identifier);
+
+    res.json({
+      status: true,
+      response: 'Verified Successfully',
+    });
+  } catch (error) {
+    console.error('Error verifying OTP:', error);
+    res.status(500).json({
+      status: false,
+      response: error.message,
     });
   }
 };
@@ -481,6 +691,8 @@ module.exports = {
   sendRegistrationOtp,
   verifyRegistrationOtp,
   firebaseLogin,
+  sendOtp,
+  verifyOtp,
 };
 
 
