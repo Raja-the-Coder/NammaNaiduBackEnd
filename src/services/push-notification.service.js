@@ -60,6 +60,31 @@ const sendPushNotificationToUser = async (accountId, notification, data = {}) =>
         };
       } catch (error) {
         console.error(`Error sending notification to token ${fcmTokens[0]}:`, error);
+        
+        // Check if token is invalid and should be removed
+        // Firebase Admin SDK error structure: error.code or error.errorInfo.code
+        const errorCode = error.code || (error.errorInfo && error.errorInfo.code) || error.errorInfo?.code;
+        if (errorCode === 'messaging/invalid-registration-token' ||
+            errorCode === 'messaging/registration-token-not-registered' ||
+            errorCode === 'messaging/unregistered') {
+          try {
+            const [updatedCount] = await DeviceToken.update(
+              { isActive: false },
+              {
+                where: {
+                  fcmToken: fcmTokens[0],
+                  isActive: true,
+                },
+              }
+            );
+            if (updatedCount > 0) {
+              console.log(`🧹 Removed invalid token from database (${updatedCount} token(s) deactivated)`);
+            }
+          } catch (cleanupError) {
+            console.error(`⚠️ Error removing invalid token:`, cleanupError.message);
+          }
+        }
+        
         return {
           success: false,
           message: 'Failed to send push notification',
@@ -174,6 +199,59 @@ const sendPushNotificationToUsers = async (accountIds, notification, data = {}) 
     try {
       const response = await sendMulticastNotification(fcmTokens, notification, data);
       console.log(`Notification send result: ${response.successCount} successful, ${response.failureCount} failed`);
+      
+      // Clean up invalid tokens after failed sends
+      if (response.failureCount > 0 && response.responses) {
+        const invalidTokenIndices = [];
+        const tokensToRemove = [];
+        
+        response.responses.forEach((resp, index) => {
+          if (!resp.success && resp.error) {
+            const errorCode = resp.error.code;
+            // These error codes indicate the token should be removed
+            if (errorCode === 'messaging/invalid-registration-token' ||
+                errorCode === 'messaging/registration-token-not-registered' ||
+                errorCode === 'messaging/unregistered') {
+              invalidTokenIndices.push(index);
+              tokensToRemove.push(fcmTokens[index]);
+            }
+          }
+        });
+        
+        // Remove invalid tokens from database
+        if (tokensToRemove.length > 0) {
+          try {
+            const [updatedCount] = await DeviceToken.update(
+              { isActive: false },
+              {
+                where: {
+                  fcmToken: tokensToRemove,
+                  isActive: true,
+                },
+              }
+            );
+            console.log(`\n🧹 Cleaned up ${updatedCount} invalid token(s) from database (deactivated)`);
+          } catch (cleanupError) {
+            console.error(`⚠️ Error cleaning up invalid tokens:`, cleanupError.message);
+          }
+        }
+        
+        // Log detailed failure information
+        console.error(`\n❌ Detailed failure information:`);
+        response.responses.forEach((resp, index) => {
+          if (!resp.success) {
+            const errorCode = resp.error?.code || 'UNKNOWN';
+            const errorMessage = resp.error?.message || 'Unknown error';
+            console.error(`   Token ${index + 1}: ${errorCode} - ${errorMessage}`);
+            if (errorCode === 'messaging/invalid-registration-token' || 
+                errorCode === 'messaging/registration-token-not-registered' ||
+                errorCode === 'messaging/unregistered') {
+              console.error(`   ✅ Token has been automatically removed from database.`);
+            }
+          }
+        });
+      }
+      
       return {
         success: true,
         message: 'Push notifications sent successfully',
@@ -181,7 +259,11 @@ const sendPushNotificationToUsers = async (accountIds, notification, data = {}) 
         failedCount: response.failureCount,
       };
     } catch (error) {
-      console.error(`Error sending multicast notification:`, error);
+      console.error(`\n❌ Error sending multicast notification:`, {
+        message: error.message,
+        code: error.code,
+        stack: error.stack,
+      });
       return {
         success: false,
         message: 'Failed to send push notifications',

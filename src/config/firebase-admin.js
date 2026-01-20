@@ -250,7 +250,29 @@ const sendMulticastNotification = async (fcmTokens, notification, data = {}) => 
     const response = await messaging.sendEachForMulticast(message);
 
     if (response.failureCount > 0) {
-      console.warn(`Failed to send ${response.failureCount} of ${fcmTokens.length} notifications`);
+      console.warn(`\n⚠️ Failed to send ${response.failureCount} of ${fcmTokens.length} notifications`);
+      
+      // Log detailed failure information
+      if (response.responses && response.responses.length > 0) {
+        response.responses.forEach((resp, index) => {
+          if (!resp.success && resp.error) {
+            const error = resp.error;
+            console.error(`   Token ${index + 1} (${fcmTokens[index].substring(0, 30)}...):`);
+            console.error(`      Code: ${error.code}`);
+            console.error(`      Message: ${error.message}`);
+            
+            // Provide specific guidance for common error codes
+            if (error.code === 'messaging/invalid-registration-token' || 
+                error.code === 'messaging/registration-token-not-registered') {
+              console.error(`      ⚠️ Action: This token is invalid or unregistered. It should be removed from the database.`);
+            } else if (error.code === 'messaging/invalid-argument') {
+              console.error(`      ⚠️ Action: Check notification payload format.`);
+            } else if (error.code === 'messaging/unregistered') {
+              console.error(`      ⚠️ Action: App was uninstalled. Token should be removed.`);
+            }
+          }
+        });
+      }
     }
 
     return response;
