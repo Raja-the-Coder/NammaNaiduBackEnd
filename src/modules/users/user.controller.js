@@ -2,6 +2,7 @@ const { Op } = require('sequelize');
 const User = require('../../models/User.model');
 const BasicDetail = require('../../models/BasicDetail.model');
 const ProfileAction = require('../../models/ProfileAction.model');
+const ProfileView = require('../../models/ProfileView.model');
 const Notification = require('../../models/Notification.model');
 const PersonPhoto = require('../../models/PersonPhoto.model');
 const HoroscopeDetail = require('../../models/HoroscopeDetail.model');
@@ -42,6 +43,8 @@ const getProfile = async (req, res) => {
 };
 
 // Get user profile by accountId (for viewing other users' profiles)
+// This endpoint returns basic profile info WITHOUT sensitive details
+// Use viewProfileDetails endpoint to view full details (deducts token)
 const getProfileByAccountId = async (req, res) => {
   try {
     const { accountId } = req.params;
@@ -52,30 +55,6 @@ const getProfileByAccountId = async (req, res) => {
         success: false,
         message: 'Account ID is required',
       });
-    }
-
-    // Check if viewing own profile
-    if (currentUserId === accountId) {
-      // Allow viewing own profile without token deduction
-    } else {
-      // Check available tokens for current user
-      const currentUser = await User.findOne({ where: { accountId: currentUserId } });
-
-      if (!currentUser) {
-        return res.status(404).json({ success: false, message: 'Current user not found' });
-      }
-
-      if (currentUser.profileViewTokens <= 0) {
-        return res.status(403).json({
-          success: false,
-          code: 'NO_TOKENS',
-          message: 'You have used all your profile view tokens. Please upgrade your subscription to view more profiles.',
-        });
-      }
-
-      // Deduct token
-      currentUser.profileViewTokens -= 1;
-      await currentUser.save();
     }
 
     // Find requested user profile
@@ -113,18 +92,207 @@ const getProfileByAccountId = async (req, res) => {
       }
     }
 
-    // Exclude sensitive information
+    // Check if viewing own profile
+    const isOwnProfile = currentUserId === accountId;
+    
+    // Check if user has already viewed this profile
+    let hasViewed = false;
+    if (!isOwnProfile) {
+      const existingView = await ProfileView.findOne({
+        where: {
+          viewerId: currentUserId,
+          viewedUserId: accountId,
+        },
+      });
+      hasViewed = !!existingView;
+    }
+
+    // Exclude sensitive information if not own profile and not viewed
+    if (!isOwnProfile && !hasViewed) {
+      // Hide sensitive fields
+      if (userData.basicDetail) {
+        delete userData.basicDetail.email;
+        delete userData.basicDetail.dateOfBirth;
+        delete userData.basicDetail.city;
+        delete userData.basicDetail.state;
+        delete userData.basicDetail.country;
+        delete userData.basicDetail.pincode;
+        // Keep other basic info visible (height, marital status, religion, etc.)
+      }
+      delete userData.email;
+      delete userData.phone;
+    }
+
+    // Exclude password always
     delete userData.password;
 
     res.json({
       success: true,
       data: userData,
+      hasViewedDetails: hasViewed || isOwnProfile,
+      isOwnProfile: isOwnProfile,
     });
   } catch (error) {
     console.error('Error getting profile by accountId:', error);
     res.status(500).json({
       success: false,
       message: error.message || 'Failed to get user profile',
+    });
+  }
+};
+
+// View profile details - deducts token and stores view history
+const viewProfileDetails = async (req, res) => {
+  try {
+    const { accountId } = req.body;
+    const currentUserId = req.accountId; // ID of the logged-in user making the request
+
+    if (!accountId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Account ID is required',
+      });
+    }
+
+    // Check if viewing own profile
+    if (currentUserId === accountId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot view details of your own profile',
+      });
+    }
+
+    // Check if already viewed
+    const existingView = await ProfileView.findOne({
+      where: {
+        viewerId: currentUserId,
+        viewedUserId: accountId,
+      },
+    });
+
+    if (existingView) {
+      // Already viewed, return full profile without deducting token
+      const user = await User.findOne({
+        where: { accountId },
+        include: [{
+          model: BasicDetail,
+          as: 'basicDetail',
+          required: false,
+        }],
+      });
+
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: 'User not found',
+        });
+      }
+
+      const userData = user.toJSON();
+      if (!userData.basicDetail) {
+        try {
+          const basicDetail = await BasicDetail.findOne({
+            where: { accountId },
+          });
+          if (basicDetail) {
+            userData.basicDetail = basicDetail.toJSON();
+          }
+        } catch (basicDetailError) {
+          console.error('Error fetching BasicDetail separately:', basicDetailError.message);
+        }
+      }
+
+      delete userData.password;
+
+      return res.json({
+        success: true,
+        message: 'Profile details retrieved',
+        data: userData,
+        tokenDeducted: false,
+        tokensRemaining: null,
+      });
+    }
+
+    // Check available tokens for current user
+    const currentUser = await User.findOne({ where: { accountId: currentUserId } });
+
+    if (!currentUser) {
+      return res.status(404).json({ success: false, message: 'Current user not found' });
+    }
+
+    if (currentUser.profileViewTokens <= 0) {
+      return res.status(403).json({
+        success: false,
+        code: 'NO_TOKENS',
+        message: 'You have used all your profile view tokens. Please upgrade your subscription to view more profiles.',
+      });
+    }
+
+    // Deduct token
+    currentUser.profileViewTokens -= 1;
+    await currentUser.save();
+
+    // Store view history
+    await ProfileView.findOrCreate({
+      where: {
+        viewerId: currentUserId,
+        viewedUserId: accountId,
+      },
+      defaults: {
+        viewerId: currentUserId,
+        viewedUserId: accountId,
+      },
+    });
+
+    // Find requested user profile with full details
+    const user = await User.findOne({
+      where: { accountId },
+      include: [{
+        model: BasicDetail,
+        as: 'basicDetail',
+        required: false,
+      }],
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+      });
+    }
+
+    // Convert to plain object and include basicDetail
+    const userData = user.toJSON();
+
+    // Fetch BasicDetail separately if association fails
+    if (!userData.basicDetail) {
+      try {
+        const basicDetail = await BasicDetail.findOne({
+          where: { accountId },
+        });
+        if (basicDetail) {
+          userData.basicDetail = basicDetail.toJSON();
+        }
+      } catch (basicDetailError) {
+        console.error('Error fetching BasicDetail separately:', basicDetailError.message);
+      }
+    }
+
+    // Exclude password
+    delete userData.password;
+
+    res.json({
+      success: true,
+      message: 'Profile details viewed successfully',
+      data: userData,
+      tokenDeducted: true,
+      tokensRemaining: currentUser.profileViewTokens,
+    });
+  } catch (error) {
+    console.error('Error viewing profile details:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to view profile details',
     });
   }
 };
@@ -1081,6 +1249,7 @@ module.exports = {
   getReceivedProfileActions,
   getOppositeGenderProfiles,
   getProfileByAccountId,
+  viewProfileDetails,
   searchProfiles,
 };
 

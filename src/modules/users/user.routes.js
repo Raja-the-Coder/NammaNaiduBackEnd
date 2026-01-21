@@ -12,6 +12,7 @@ const {
   getReceivedProfileActions,
   getOppositeGenderProfiles,
   getProfileByAccountId,
+  viewProfileDetails,
   searchProfiles,
 } = require('./user.controller');
 const photoRoutes = require('./photo.routes');
@@ -26,6 +27,16 @@ router.use(authenticate);
 // IMPORTANT: More specific routes (with parameters) should come BEFORE less specific routes
 // Get user profile by accountId (for viewing other users' profiles) - must come before /profile
 router.get('/profile/:accountId', getProfileByAccountId);
+
+// View profile details (deducts token and stores view history)
+router.post('/profile/view-details', [
+  body('accountId')
+    .notEmpty()
+    .withMessage('accountId is required')
+    .isUUID()
+    .withMessage('accountId must be a valid UUID'),
+  validate,
+], viewProfileDetails);
 
 // Get current user profile
 router.get('/profile', getProfile);

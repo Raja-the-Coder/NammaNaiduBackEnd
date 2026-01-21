@@ -9,6 +9,7 @@ require('./models/masters');
 require('./models/SubscriptionPlan.model');
 require('./models/SubscriptionTransaction.model');
 require('./models/ProfileAction.model');
+require('./models/ProfileView.model');
 require('./models/PersonPhoto.model');
 require('./models/Notification.model');
 require('./models/DeviceToken.model');
