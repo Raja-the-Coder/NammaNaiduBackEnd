@@ -386,6 +386,7 @@ const saveBasicDetails = async (req, res) => {
       subcaste,
       willingToMarryFromAnyCaste,
       dosham,
+      vegetarian,
       country,
       state,
       city,
@@ -438,6 +439,7 @@ const saveBasicDetails = async (req, res) => {
         ? willingToMarryFromAnyCaste
         : willingToMarryFromAnyCaste === 'true',
       dosham,
+      vegetarian,
       country,
       state,
       city,

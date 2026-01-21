@@ -56,6 +56,10 @@ const BasicDetail = sequelize.define(
       type: DataTypes.STRING,
       allowNull: true,
     },
+    vegetarian: {
+      type: DataTypes.STRING,
+      allowNull: true,
+    },
     country: {
       type: DataTypes.STRING,
       allowNull: true,

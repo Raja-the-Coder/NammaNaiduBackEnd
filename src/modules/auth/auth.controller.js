@@ -416,6 +416,10 @@ const sendOtp = async (req, res) => {
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
     const expiresAt = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000);
 
+    // Variables to track email sending status
+    let emailSent = false;
+    let emailError = null;
+
     if (isemailid) {
       // Find or create OTP record for email
       const [otpRecord, created] = await Otp.findOrCreate({
@@ -439,6 +443,7 @@ const sendOtp = async (req, res) => {
       }
 
       // Send OTP via email using Nodemailer
+      
       if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
         console.warn('⚠️  EMAIL_USER or EMAIL_PASS not configured. Email OTP will not be sent.');
         console.warn('   Please set EMAIL_USER and EMAIL_PASS in your .env file');
@@ -451,79 +456,75 @@ const sendOtp = async (req, res) => {
         console.log('   To:', mailid);
         console.log('   OTP:', otpCode);
         
-        // Create email sending function with timeout protection
-        const sendEmailWithTimeout = async () => {
-          const timeoutPromise = new Promise((_, reject) => {
-            setTimeout(() => reject(new Error('Email sending timeout after 15 seconds')), 15000);
-          });
+        try {
+          // Create email sending function with timeout protection
+          const sendEmailWithTimeout = async () => {
+            const timeoutPromise = new Promise((_, reject) => {
+              setTimeout(() => reject(new Error('Email sending timeout after 15 seconds')), 15000);
+            });
 
-          const emailPromise = transporter.sendMail({
-            from: process.env.EMAIL_USER,
-            to: mailid,
-            subject: 'Your OTP Verification Code - Namma Naidu',
-            html: `
-              <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-                <h2 style="color: #FB34AA;">OTP Verification Code</h2>
-                <p>Hello,</p>
-                <p>Your OTP verification code is:</p>
-                <div style="background-color: #f4f4f4; padding: 20px; text-align: center; margin: 20px 0; border-radius: 8px;">
-                  <h1 style="color: #FB34AA; font-size: 32px; margin: 0; letter-spacing: 5px;">${otpCode}</h1>
+            const emailPromise = transporter.sendMail({
+              from: process.env.EMAIL_USER,
+              to: mailid,
+              subject: 'Your OTP Verification Code - Namma Naidu',
+              html: `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+                  <h2 style="color: #FB34AA;">OTP Verification Code</h2>
+                  <p>Hello,</p>
+                  <p>Your OTP verification code is:</p>
+                  <div style="background-color: #f4f4f4; padding: 20px; text-align: center; margin: 20px 0; border-radius: 8px;">
+                    <h1 style="color: #FB34AA; font-size: 32px; margin: 0; letter-spacing: 5px;">${otpCode}</h1>
+                  </div>
+                  <p>This OTP is valid for ${OTP_EXPIRY_MINUTES} minutes.</p>
+                  <p>If you didn't request this OTP, please ignore this email.</p>
+                  <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+                  <p style="color: #666; font-size: 12px;">This is an automated message from Namma Naidu Matrimony.</p>
                 </div>
-                <p>This OTP is valid for ${OTP_EXPIRY_MINUTES} minutes.</p>
-                <p>If you didn't request this OTP, please ignore this email.</p>
-                <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
-                <p style="color: #666; font-size: 12px;">This is an automated message from Namma Naidu Matrimony.</p>
-              </div>
-            `,
-          });
+              `,
+            });
 
-          return Promise.race([emailPromise, timeoutPromise]);
-        };
+            return Promise.race([emailPromise, timeoutPromise]);
+          };
 
-        // Send email asynchronously without blocking the response
-        // But log errors more prominently for server debugging
-        sendEmailWithTimeout()
-          .then((emailResult) => {
-            console.log('✅ OTP email sent successfully!');
-            console.log('   Message ID:', emailResult.messageId);
-            console.log('   Response:', emailResult.response);
-            console.log('   To:', mailid);
-            console.log('   OTP:', otpCode);
-          })
-          .catch((emailError) => {
-            // Enhanced error logging for server debugging
-            console.error('═══════════════════════════════════════════════════════');
-            console.error('❌ ERROR SENDING OTP EMAIL');
-            console.error('═══════════════════════════════════════════════════════');
-            console.error('Error Message:', emailError.message);
-            console.error('Error Code:', emailError.code);
-            console.error('Error Stack:', emailError.stack);
-            console.error('To Email:', mailid);
-            console.error('From Email:', process.env.EMAIL_USER);
-            console.error('OTP (for testing):', otpCode);
-            
-            // Check for common Gmail errors
-            if (emailError.code === 'EAUTH') {
-              console.error('⚠️  AUTHENTICATION ERROR:');
-              console.error('   - Check if EMAIL_USER and EMAIL_PASS are correct');
-              console.error('   - Verify App Password is valid (not regular password)');
-              console.error('   - Ensure 2-Step Verification is enabled in Google Account');
-            } else if (emailError.code === 'ECONNECTION' || emailError.code === 'ETIMEDOUT') {
-              console.error('⚠️  CONNECTION ERROR:');
-              console.error('   - Check server internet connection');
-              console.error('   - Verify firewall allows SMTP (port 587/465)');
-              console.error('   - Check if Gmail SMTP is accessible from server');
-            } else if (emailError.code === 'EMESSAGE') {
-              console.error('⚠️  MESSAGE ERROR:');
-              console.error('   - Check email format and content');
-            }
-            console.error('═══════════════════════════════════════════════════════');
-            // Email failure doesn't affect the API response
-            // OTP is already stored in database and returned to user
-          });
-
-        // Log that email is being sent (non-blocking)
-        console.log('📧 OTP email queued for sending to:', mailid);
+          // Await email sending to catch errors properly
+          const emailResult = await sendEmailWithTimeout();
+          emailSent = true;
+          console.log('✅ OTP email sent successfully!');
+          console.log('   Message ID:', emailResult.messageId);
+          console.log('   Response:', emailResult.response);
+          console.log('   To:', mailid);
+          console.log('   OTP:', otpCode);
+        } catch (err) {
+          emailError = err;
+          // Enhanced error logging for server debugging
+          console.error('═══════════════════════════════════════════════════════');
+          console.error('❌ ERROR SENDING OTP EMAIL');
+          console.error('═══════════════════════════════════════════════════════');
+          console.error('Error Message:', err.message);
+          console.error('Error Code:', err.code);
+          console.error('Error Stack:', err.stack);
+          console.error('To Email:', mailid);
+          console.error('From Email:', process.env.EMAIL_USER);
+          console.error('OTP (for testing):', otpCode);
+          
+          // Check for common Gmail errors
+          if (err.code === 'EAUTH') {
+            console.error('⚠️  AUTHENTICATION ERROR:');
+            console.error('   - Check if EMAIL_USER and EMAIL_PASS are correct');
+            console.error('   - Verify App Password is valid (not regular password)');
+            console.error('   - Ensure 2-Step Verification is enabled in Google Account');
+          } else if (err.code === 'ECONNECTION' || err.code === 'ETIMEDOUT') {
+            console.error('⚠️  CONNECTION ERROR:');
+            console.error('   - Check server internet connection');
+            console.error('   - Verify firewall allows SMTP (port 587/465)');
+            console.error('   - Check if Gmail SMTP is accessible from server');
+          } else if (err.code === 'EMESSAGE') {
+            console.error('⚠️  MESSAGE ERROR:');
+            console.error('   - Check email format and content');
+          }
+          console.error('═══════════════════════════════════════════════════════');
+          // Don't throw - still return OTP to user even if email fails
+        }
       }
     } else {
       // Find or create OTP record for phone
@@ -550,11 +551,28 @@ const sendOtp = async (req, res) => {
 
     console.log('✅ OTP record upserted for', { identifier, expiresAt, otp: otpCode });
 
-    res.json({
+    const response = {
       status: true,
       [isemailid ? 'mailid' : 'mobileno']: identifier,
       otp: otpCode,
-    });
+    };
+
+    // Add email sending status if it's an email OTP
+    if (isemailid) {
+      if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+        response.emailSent = false;
+        response.message = 'OTP generated but email not configured. Please check server configuration.';
+      } else if (emailSent) {
+        response.emailSent = true;
+        response.message = 'OTP sent successfully to your email.';
+      } else if (emailError) {
+        response.emailSent = false;
+        response.message = 'OTP generated but email sending failed. Please check server logs. OTP is available in response for testing.';
+        response.emailError = emailError.message;
+      }
+    }
+
+    res.json(response);
   } catch (error) {
     console.error('Error sending OTP:', error);
     res.status(500).json({
