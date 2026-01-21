@@ -98,13 +98,19 @@ const getProfileByAccountId = async (req, res) => {
     // Check if user has already viewed this profile
     let hasViewed = false;
     if (!isOwnProfile) {
-      const existingView = await ProfileView.findOne({
-        where: {
-          viewerId: currentUserId,
-          viewedUserId: accountId,
-        },
-      });
-      hasViewed = !!existingView;
+      try {
+        const existingView = await ProfileView.findOne({
+          where: {
+            viewerId: currentUserId,
+            viewedUserId: accountId,
+          },
+        });
+        hasViewed = !!existingView;
+      } catch (profileViewError) {
+        // If ProfileView table doesn't exist or query fails, assume not viewed
+        console.error('Error checking ProfileView (table may not exist):', profileViewError.message);
+        hasViewed = false;
+      }
     }
 
     // Exclude sensitive information if not own profile and not viewed
@@ -134,9 +140,11 @@ const getProfileByAccountId = async (req, res) => {
     });
   } catch (error) {
     console.error('Error getting profile by accountId:', error);
+    console.error('Full error stack:', error.stack);
     res.status(500).json({
       success: false,
       message: error.message || 'Failed to get user profile',
+      error: process.env.NODE_ENV === 'development' ? error.stack : undefined,
     });
   }
 };
@@ -163,12 +171,19 @@ const viewProfileDetails = async (req, res) => {
     }
 
     // Check if already viewed
-    const existingView = await ProfileView.findOne({
-      where: {
-        viewerId: currentUserId,
-        viewedUserId: accountId,
-      },
-    });
+    let existingView = null;
+    try {
+      existingView = await ProfileView.findOne({
+        where: {
+          viewerId: currentUserId,
+          viewedUserId: accountId,
+        },
+      });
+    } catch (profileViewError) {
+      // If ProfileView table doesn't exist, log and continue
+      console.error('Error checking ProfileView (table may not exist):', profileViewError.message);
+      // Continue without checking - will try to create view history later
+    }
 
     if (existingView) {
       // Already viewed, return full profile without deducting token
@@ -233,16 +248,23 @@ const viewProfileDetails = async (req, res) => {
     await currentUser.save();
 
     // Store view history
-    await ProfileView.findOrCreate({
-      where: {
-        viewerId: currentUserId,
-        viewedUserId: accountId,
-      },
-      defaults: {
-        viewerId: currentUserId,
-        viewedUserId: accountId,
-      },
-    });
+    try {
+      await ProfileView.findOrCreate({
+        where: {
+          viewerId: currentUserId,
+          viewedUserId: accountId,
+        },
+        defaults: {
+          viewerId: currentUserId,
+          viewedUserId: accountId,
+        },
+      });
+    } catch (profileViewError) {
+      // If ProfileView table doesn't exist, log error but don't fail the request
+      console.error('Error storing ProfileView (table may not exist):', profileViewError.message);
+      console.error('Please run migration: node migrations/create-profile-views-table.js');
+      // Continue without storing view history - token already deducted
+    }
 
     // Find requested user profile with full details
     const user = await User.findOne({
