@@ -482,10 +482,10 @@ const saveBasicDetails = async (req, res) => {
       throw findError;
     }
 
-    // Try to update with pincode/district first, fallback if columns don't exist
+    // Try to update with optional fields first, fallback if columns don't exist
     let payload = { ...basePayload };
 
-    // Add pincode and district if provided
+    // Add optional fields if provided
     if (pincode !== undefined && pincode !== null && pincode !== '') {
       payload.pincode = pincode;
     }
@@ -501,21 +501,52 @@ const saveBasicDetails = async (req, res) => {
       console.error('Update error:', updateError.message);
       console.error('Error name:', updateError.name);
 
-      // Check if error is due to missing pincode/district columns
+      // Check if error is due to missing columns (pincode, district, or vegetarian)
       const errorMessage = (updateError.message || '').toLowerCase();
       const isColumnError = errorMessage.includes('pincode') ||
         errorMessage.includes('district') ||
+        errorMessage.includes('vegetarian') ||
         (errorMessage.includes('column') && errorMessage.includes('does not exist'));
 
       if (isColumnError) {
-        console.warn('Update failed due to missing columns, retrying without pincode/district');
-        // Use base payload without pincode/district
+        console.warn('Update failed due to missing columns, retrying without optional fields');
+        
+        // Remove optional fields that might not exist in database
+        const fallbackPayload = { ...basePayload };
+        delete fallbackPayload.pincode;
+        delete fallbackPayload.district;
+        
+        // Check if vegetarian column exists, if not remove it
+        if (errorMessage.includes('vegetarian')) {
+          delete fallbackPayload.vegetarian;
+          console.warn('⚠️  VEGETARIAN column missing. Please run migration: node migrations/run-vegetarian-migration.js');
+        }
+        
         try {
-          await basicDetail.update(basePayload);
-          console.warn('Update succeeded without pincode/district. Please run SQL migration to add these columns.');
-          // Continue with success response - data saved without pincode/district
+          await basicDetail.update(fallbackPayload);
+          console.warn('Update succeeded without optional fields. Please run SQL migrations to add missing columns.');
+          console.warn('   - For vegetarian: node migrations/run-vegetarian-migration.js');
+          console.warn('   - For pincode/district: Check existing migration scripts');
+          // Continue with success response - data saved without optional fields
         } catch (retryError) {
           console.error('Retry update also failed:', retryError.message);
+          
+          // Provide specific migration instructions
+          if (retryError.message.toLowerCase().includes('vegetarian')) {
+            return res.status(500).json({
+              success: false,
+              message: 'Database migration required: The vegetarian column is missing.',
+              error: 'Migration required: basic_details table needs vegetarian column',
+              instructions: [
+                '1. Navigate to the migrations folder: cd migrations',
+                '2. Run the migration: node run-vegetarian-migration.js',
+                '3. Restart your backend server',
+                '4. Try registering again'
+              ],
+              migrationScript: 'migrations/run-vegetarian-migration.js'
+            });
+          }
+          
           throw retryError;
         }
       } else {
@@ -545,9 +576,29 @@ const saveBasicDetails = async (req, res) => {
 
     // Check if it's a database column error
     if (error.message && (error.message.includes('column') && error.message.includes('does not exist'))) {
+      const errorMsg = error.message.toLowerCase();
+      let migrationScript = 'migrations/run-vegetarian-migration.js';
+      let columnName = 'vegetarian';
+      
+      if (errorMsg.includes('vegetarian')) {
+        migrationScript = 'migrations/run-vegetarian-migration.js';
+        columnName = 'vegetarian';
+      } else if (errorMsg.includes('pincode') || errorMsg.includes('district')) {
+        migrationScript = 'Check existing migration scripts for pincode/district';
+        columnName = 'pincode/district';
+      }
+      
       return res.status(500).json({
         success: false,
-        message: `Database column error: ${error.message}. Please run the SQL migration script to add missing columns.`,
+        message: `Database column error: ${error.message}`,
+        error: `Migration required: basic_details table needs ${columnName} column`,
+        instructions: [
+          '1. Navigate to the migrations folder: cd migrations',
+          `2. Run the migration: node ${migrationScript.split('/').pop()}`,
+          '3. Restart your backend server',
+          '4. Try registering again'
+        ],
+        migrationScript: migrationScript
       });
     }
 

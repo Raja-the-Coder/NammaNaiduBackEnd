@@ -1,5 +1,42 @@
 # Database Migrations
 
+## Quick Start: Running Migrations
+
+All migrations can be run using Node.js scripts. Make sure your `.env` file has the `DATABASE_URL` configured.
+
+```bash
+# Navigate to migrations folder
+cd migrations
+
+# Run a specific migration
+node run-vegetarian-migration.js
+node run-family-fields-migration.js
+# ... etc
+```
+
+---
+
+## Migration: Add Vegetarian Column to basic_details
+
+**Required for:** User registration with diet preference
+
+### Run Migration
+
+```bash
+cd migrations
+node run-vegetarian-migration.js
+```
+
+### What it does
+
+Adds a `vegetarian` column to the `basic_details` table to store diet preference (Vegetarian/Non-Vegetarian).
+
+### After Migration
+
+Restart your backend server. The registration will now work correctly.
+
+---
+
 ## Migration: Change personId from INTEGER to UUID
 
 The `person_photos` table needs to be updated to use UUID for `personId` instead of INTEGER.
@@ -31,3 +68,23 @@ psql -U your_username -d your_database -f alter_person_photos_personid_to_uuid_p
 ### After Migration
 
 Restart your backend server. The model is already configured to use UUID, so it should work correctly after the migration.
+
+---
+
+## Common Migration Issues
+
+### Error: "column does not exist"
+
+If you get this error during registration, it means a migration hasn't been run. Check which column is missing and run the corresponding migration:
+
+- **vegetarian**: `node run-vegetarian-migration.js`
+- **pincode/district**: Check if these columns exist, may need manual SQL
+- **familyType/familyValues**: `node run-family-fields-migration.js`
+
+### Error: "Connection refused" or "Cannot connect to database"
+
+Make sure your `DATABASE_URL` in `.env` is correct and the database server is running.
+
+### Error: "Permission denied"
+
+Make sure your database user has ALTER TABLE permissions.
