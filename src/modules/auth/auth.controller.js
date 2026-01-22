@@ -8,6 +8,8 @@ const {
   initializeFirebaseAdmin,
 } = require('../../config/firebase-admin');
 const transporter = require('../../mailer');
+const { verifyAccessToken, sendOtpSms } = require('../../services/msg91.service');
+const { sendEmail } = require('../../services/email.service');
 
 const OTP_STATIC_CODE = process.env.OTP_STATIC_CODE || '12345';
 const OTP_EXPIRY_MINUTES = Number(process.env.OTP_EXPIRY_MINUTES || 10);
@@ -58,13 +60,18 @@ const register = async (req, res) => {
       payload: { name },
     });
 
-    // Send OTP via email
-    await transporter.sendMail({
-      from: process.env.EMAIL_USER,
-      to: email,
-      subject: 'Your Email OTP Verification Code',
-      html: `<h2>Your OTP is ${otpCode}</h2><p>Valid for ${OTP_EXPIRY_MINUTES} minutes.</p>`,
-    });
+    // Send OTP via email (supports Resend API and SMTP)
+    try {
+      await sendEmail(
+        email,
+        'Your Email OTP Verification Code',
+        `<h2>Your OTP is ${otpCode}</h2><p>Valid for ${OTP_EXPIRY_MINUTES} minutes.</p>`
+      );
+      console.log('✅ Registration OTP email sent successfully');
+    } catch (emailError) {
+      console.error('⚠️  Failed to send registration OTP email:', emailError.message);
+      // Don't throw - user is still created, OTP is stored in database
+    }
 
     const token = generateToken(user.accountId);
 
@@ -442,56 +449,53 @@ const sendOtp = async (req, res) => {
         await otpRecord.save();
       }
 
-      // Send OTP via email using Nodemailer
-      
-      if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-        console.warn('⚠️  EMAIL_USER or EMAIL_PASS not configured. Email OTP will not be sent.');
-        console.warn('   Please set EMAIL_USER and EMAIL_PASS in your .env file');
-        console.warn('   EMAIL_USER:', process.env.EMAIL_USER ? 'SET' : 'NOT SET');
-        console.warn('   EMAIL_PASS:', process.env.EMAIL_PASS ? 'SET' : 'NOT SET');
+      // Send OTP via email (supports Resend API and SMTP)
+      const emailHtml = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+          <h2 style="color: #FB34AA;">OTP Verification Code</h2>
+          <p>Hello,</p>
+          <p>Your OTP verification code is:</p>
+          <div style="background-color: #f4f4f4; padding: 20px; text-align: center; margin: 20px 0; border-radius: 8px;">
+            <h1 style="color: #FB34AA; font-size: 32px; margin: 0; letter-spacing: 5px;">${otpCode}</h1>
+          </div>
+          <p>This OTP is valid for ${OTP_EXPIRY_MINUTES} minutes.</p>
+          <p>If you didn't request this OTP, please ignore this email.</p>
+          <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+          <p style="color: #666; font-size: 12px;">This is an automated message from Namma Naidu Matrimony.</p>
+        </div>
+      `;
+
+      if (!process.env.SENDGRID_API_KEY && !process.env.RESEND_API_KEY && !process.env.EMAIL_USER) {
+        console.warn('⚠️  No email provider configured. Email OTP will not be sent.');
+        console.warn('   Please set one of:');
+        console.warn('   - SENDGRID_API_KEY (recommended for Render Free)');
+        console.warn('   - RESEND_API_KEY (recommended for Railway/VPS)');
+        console.warn('   - OR EMAIL_USER and EMAIL_PASS (SMTP - may not work on cloud platforms)');
         console.log('📧 OTP generated but email not sent. OTP:', otpCode);
       } else {
         console.log('📧 Attempting to send OTP email...');
-        console.log('   From:', process.env.EMAIL_USER);
+        if (process.env.SENDGRID_API_KEY) {
+          console.log('   Provider: SendGrid API (recommended for Render Free)');
+        } else if (process.env.RESEND_API_KEY) {
+          console.log('   Provider: Resend API');
+        } else {
+          console.log('   Provider: SMTP');
+        }
         console.log('   To:', mailid);
         console.log('   OTP:', otpCode);
         
         try {
-          // Create email sending function with timeout protection
-          const sendEmailWithTimeout = async () => {
-            const timeoutPromise = new Promise((_, reject) => {
-              setTimeout(() => reject(new Error('Email sending timeout after 15 seconds')), 15000);
-            });
-
-            const emailPromise = transporter.sendMail({
-              from: process.env.EMAIL_USER,
-              to: mailid,
-              subject: 'Your OTP Verification Code - Namma Naidu',
-              html: `
-                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-                  <h2 style="color: #FB34AA;">OTP Verification Code</h2>
-                  <p>Hello,</p>
-                  <p>Your OTP verification code is:</p>
-                  <div style="background-color: #f4f4f4; padding: 20px; text-align: center; margin: 20px 0; border-radius: 8px;">
-                    <h1 style="color: #FB34AA; font-size: 32px; margin: 0; letter-spacing: 5px;">${otpCode}</h1>
-                  </div>
-                  <p>This OTP is valid for ${OTP_EXPIRY_MINUTES} minutes.</p>
-                  <p>If you didn't request this OTP, please ignore this email.</p>
-                  <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
-                  <p style="color: #666; font-size: 12px;">This is an automated message from Namma Naidu Matrimony.</p>
-                </div>
-              `,
-            });
-
-            return Promise.race([emailPromise, timeoutPromise]);
-          };
-
-          // Await email sending to catch errors properly
-          const emailResult = await sendEmailWithTimeout();
+          // Use email service that supports both Resend API and SMTP
+          const emailResult = await sendEmail(
+            mailid,
+            'Your OTP Verification Code - Namma Naidu',
+            emailHtml
+          );
+          
           emailSent = true;
           console.log('✅ OTP email sent successfully!');
+          console.log('   Provider:', emailResult.provider || 'unknown');
           console.log('   Message ID:', emailResult.messageId);
-          console.log('   Response:', emailResult.response);
           console.log('   To:', mailid);
           console.log('   OTP:', otpCode);
         } catch (err) {
@@ -501,26 +505,24 @@ const sendOtp = async (req, res) => {
           console.error('❌ ERROR SENDING OTP EMAIL');
           console.error('═══════════════════════════════════════════════════════');
           console.error('Error Message:', err.message);
-          console.error('Error Code:', err.code);
+          console.error('Error Code:', err.code || 'N/A');
           console.error('Error Stack:', err.stack);
           console.error('To Email:', mailid);
-          console.error('From Email:', process.env.EMAIL_USER);
           console.error('OTP (for testing):', otpCode);
           
-          // Check for common Gmail errors
-          if (err.code === 'EAUTH') {
+          // Provide helpful suggestions based on error
+          if (err.message.includes('SMTP') || err.code === 'ECONNECTION' || err.code === 'ETIMEDOUT') {
+            console.error('⚠️  SMTP CONNECTION ERROR:');
+            console.error('   - SMTP ports (587/465) may be blocked on your hosting provider');
+            console.error('   - Solution: Use an Email API instead:');
+            console.error('     • SendGrid (Render Free): https://sendgrid.com - Set SENDGRID_API_KEY');
+            console.error('     • Resend (Railway/VPS): https://resend.com - Set RESEND_API_KEY');
+            console.error('   - Email APIs work without SMTP ports and are more reliable on cloud platforms');
+          } else if (err.code === 'EAUTH') {
             console.error('⚠️  AUTHENTICATION ERROR:');
             console.error('   - Check if EMAIL_USER and EMAIL_PASS are correct');
             console.error('   - Verify App Password is valid (not regular password)');
             console.error('   - Ensure 2-Step Verification is enabled in Google Account');
-          } else if (err.code === 'ECONNECTION' || err.code === 'ETIMEDOUT') {
-            console.error('⚠️  CONNECTION ERROR:');
-            console.error('   - Check server internet connection');
-            console.error('   - Verify firewall allows SMTP (port 587/465)');
-            console.error('   - Check if Gmail SMTP is accessible from server');
-          } else if (err.code === 'EMESSAGE') {
-            console.error('⚠️  MESSAGE ERROR:');
-            console.error('   - Check email format and content');
           }
           console.error('═══════════════════════════════════════════════════════');
           // Don't throw - still return OTP to user even if email fails
@@ -547,6 +549,49 @@ const sendOtp = async (req, res) => {
         otpRecord.verified = false;
         await otpRecord.save();
       }
+
+      // Send OTP via MSG91 SMS
+      let smsSent = false;
+      let smsError = null;
+
+      console.log('📱 Attempting to send OTP SMS via MSG91...');
+      console.log('   To:', mobileno);
+      console.log('   OTP:', otpCode);
+
+      try {
+        const smsResult = await sendOtpSms(
+          mobileno,
+          otpCode,
+          `Your OTP verification code for Namma Naidu is ${otpCode}. Valid for ${OTP_EXPIRY_MINUTES} minutes.`,
+          'NNMATRI', // Sender ID
+          OTP_EXPIRY_MINUTES
+        );
+
+        if (smsResult.success) {
+          smsSent = true;
+          console.log('✅ OTP SMS sent successfully via MSG91!');
+          console.log('   Request ID:', smsResult.data?.requestId);
+          console.log('   To:', mobileno);
+          console.log('   OTP:', otpCode);
+        } else {
+          smsError = new Error(smsResult.message || 'Failed to send SMS');
+          console.error('❌ Failed to send OTP SMS via MSG91:');
+          console.error('   Error:', smsResult.message);
+          console.error('   To:', mobileno);
+          console.error('   OTP (for testing):', otpCode);
+        }
+      } catch (err) {
+        smsError = err;
+        console.error('═══════════════════════════════════════════════════════');
+        console.error('❌ ERROR SENDING OTP SMS VIA MSG91');
+        console.error('═══════════════════════════════════════════════════════');
+        console.error('Error Message:', err.message);
+        console.error('Error Stack:', err.stack);
+        console.error('To Mobile:', mobileno);
+        console.error('OTP (for testing):', otpCode);
+        console.error('═══════════════════════════════════════════════════════');
+        // Don't throw - still return OTP to user even if SMS fails
+      }
     }
 
     console.log('✅ OTP record upserted for', { identifier, expiresAt, otp: otpCode });
@@ -570,6 +615,19 @@ const sendOtp = async (req, res) => {
         response.message = 'OTP generated but email sending failed. Please check server logs. OTP is available in response for testing.';
         response.emailError = emailError.message;
       }
+    } else {
+      // Add SMS sending status for mobile OTP
+      if (smsSent) {
+        response.smsSent = true;
+        response.message = 'OTP sent successfully to your mobile number.';
+      } else if (smsError) {
+        response.smsSent = false;
+        response.message = 'OTP generated but SMS sending failed. Please check server logs. OTP is available in response for testing.';
+        response.smsError = smsError.message;
+      } else {
+        response.smsSent = false;
+        response.message = 'OTP generated. SMS sending status unknown.';
+      }
     }
 
     res.json(response);
@@ -582,10 +640,35 @@ const sendOtp = async (req, res) => {
   }
 };
 
-// Verify OTP (new API - supports both mobile and email)
+// Verify OTP (new API - supports both mobile and email, and MSG91 token)
 const verifyOtp = async (req, res) => {
   try {
-    const { mobileno, mailid, otp, isemailid } = req.body;
+    const { mobileno, mailid, otp, isemailid, msg91AccessToken } = req.body;
+
+    // If MSG91 access token is provided, verify with MSG91 first
+    if (msg91AccessToken) {
+      console.log('🔐 Verifying MSG91 access token...');
+      const msg91Result = await verifyAccessToken(msg91AccessToken);
+      
+      if (!msg91Result.success) {
+        return res.status(400).json({
+          status: false,
+          response: msg91Result.message || 'MSG91 OTP verification failed',
+        });
+      }
+
+      console.log('✅ MSG91 token verified successfully');
+      
+      // If MSG91 verification succeeds, we can proceed with standard OTP verification
+      // or return success if only MSG91 verification is needed
+      // For now, we'll still require OTP to be provided for additional security
+      if (!otp) {
+        return res.status(400).json({
+          status: false,
+          response: 'OTP is required even after MSG91 verification',
+        });
+      }
+    }
 
     // Validate input
     if (!otp) {
@@ -662,6 +745,43 @@ const verifyOtp = async (req, res) => {
     });
   } catch (error) {
     console.error('Error verifying OTP:', error);
+    res.status(500).json({
+      status: false,
+      response: error.message,
+    });
+  }
+};
+
+// Verify MSG91 access token (standalone endpoint)
+const verifyMsg91Token = async (req, res) => {
+  try {
+    const { accessToken } = req.body;
+
+    if (!accessToken) {
+      return res.status(400).json({
+        status: false,
+        response: 'Access token is required',
+      });
+    }
+
+    console.log('🔐 Verifying MSG91 access token...');
+    const result = await verifyAccessToken(accessToken);
+
+    if (result.success) {
+      console.log('✅ MSG91 token verified successfully');
+      return res.json({
+        status: true,
+        response: result.message || 'MSG91 token verified successfully',
+        data: result.data,
+      });
+    } else {
+      return res.status(400).json({
+        status: false,
+        response: result.message || 'MSG91 token verification failed',
+      });
+    }
+  } catch (error) {
+    console.error('Error verifying MSG91 token:', error);
     res.status(500).json({
       status: false,
       response: error.message,
@@ -782,6 +902,7 @@ module.exports = {
   firebaseLogin,
   sendOtp,
   verifyOtp,
+  verifyMsg91Token,
 };
 
 

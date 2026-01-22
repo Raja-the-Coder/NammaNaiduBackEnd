@@ -8,6 +8,7 @@ const {
   firebaseLogin,
   sendOtp,
   verifyOtp,
+  verifyMsg91Token,
 } = require('./auth.controller');
 const { validate } = require('../../middleware/validation.middleware');
 
@@ -124,9 +125,24 @@ router.post(
       .optional()
       .isEmail()
       .withMessage('Please provide a valid email'),
+    body('msg91AccessToken')
+      .optional()
+      .trim()
+      .notEmpty()
+      .withMessage('MSG91 access token must not be empty if provided'),
     validate,
   ],
   verifyOtp
+);
+
+// MSG91 token verification endpoint
+router.post(
+  '/msg91/verify-token',
+  [
+    body('accessToken').trim().notEmpty().withMessage('Access token is required'),
+    validate,
+  ],
+  verifyMsg91Token
 );
 
 module.exports = router;

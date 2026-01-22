@@ -36,9 +36,12 @@ const getSmtpConfig = () => {
         };
     }
     
-    // Default Gmail configuration
+    // Default Gmail configuration with explicit host/port/secure settings
+    // This is more reliable than using service: 'gmail'
     return {
-        service: 'gmail',
+        host: 'smtp.gmail.com',
+        port: 587,
+        secure: false, // MUST be false for port 587, true for 465
         auth: {
             user: process.env.EMAIL_USER,
             pass: process.env.EMAIL_PASS,
@@ -48,17 +51,18 @@ const getSmtpConfig = () => {
         maxConnections: 5,
         maxMessages: 100,
         // Increased timeout settings for better reliability
-        connectionTimeout: 30000, // 30 seconds (increased from 10)
-        greetingTimeout: 30000,    // 30 seconds (increased from 10)
-        socketTimeout: 30000,      // 30 seconds (increased from 10)
+        connectionTimeout: 30000, // 30 seconds
+        greetingTimeout: 30000,    // 30 seconds
+        socketTimeout: 30000,      // 30 seconds
         // Retry settings
         retry: {
-            attempts: 3, // Increased from 2
+            attempts: 3,
             delay: 2000, // 2 seconds delay between retries
         },
         // TLS options for better compatibility
         tls: {
             rejectUnauthorized: false, // Accept self-signed certificates
+            ciphers: 'SSLv3', // Use SSLv3 for better compatibility
         },
         // Debug mode (set to true for troubleshooting)
         debug: process.env.EMAIL_DEBUG === 'true',
