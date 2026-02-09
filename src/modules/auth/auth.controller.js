@@ -348,9 +348,9 @@ const verifyRegistrationOtp = async (req, res) => {
 
     const phone = formatPhone(countryCode, mobile);
 
-    // Default test OTP - only allowed in non-production environments
+    // Default test OTP - allowed via ALLOW_TEST_OTP env or non-production
     const DEFAULT_TEST_OTP = '150599';
-    const isTestOtpAllowed = process.env.NODE_ENV !== 'production';
+    const isTestOtpAllowed = process.env.ALLOW_TEST_OTP === 'true' || process.env.NODE_ENV !== 'production';
     let otpRecord = null;
     
     if (isTestOtpAllowed && otp === DEFAULT_TEST_OTP) {
@@ -737,9 +737,9 @@ const verifyOtp = async (req, res) => {
     const identifier = isemailid ? mailid : phone;
     const isRegistration = !isemailid && (name != null && String(name).trim() !== '');
 
-    // Default test OTP - only allowed in non-production environments
+    // Default test OTP - allowed via ALLOW_TEST_OTP env or non-production
     const DEFAULT_TEST_OTP = '150599';
-    const isTestOtpAllowed = process.env.NODE_ENV !== 'production';
+    const isTestOtpAllowed = process.env.ALLOW_TEST_OTP === 'true' || process.env.NODE_ENV !== 'production';
     let otpRecord = null;
     const deviceInfo = req.headers['user-agent'] || null;
     if (isTestOtpAllowed && otp === DEFAULT_TEST_OTP) {
