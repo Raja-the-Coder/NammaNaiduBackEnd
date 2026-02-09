@@ -21,6 +21,7 @@ const otpSendLimiter = rateLimit({
     const identifier = req.body.mobileno || req.body.mailid || '';
     return `${req.ip}-${identifier}`;
   },
+  validate: { ipAddress: false }, // Custom keyGenerator handles IP ourselves
 });
 
 // OTP verify: moderate limit (10 requests per minute per IP)
