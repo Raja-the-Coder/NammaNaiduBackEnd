@@ -1,35 +1,60 @@
 const { Sequelize } = require('sequelize');
 
-// Railway Best Practice: Use DATABASE_URL only
-// Railway auto-injects: PGUSER, PGPASSWORD, PGDATABASE, PGHOST, PGPORT
-// For Railway connections, always use SSL
+/**
+ * Database Configuration for Hostinger VPS PostgreSQL
+ * 
+ * Supports:
+ * - DATABASE_URL connection string (recommended)
+ * - Individual DB_* environment variables (fallback)
+ * - SSL for external connections (Railway, Heroku, etc.)
+ * - No SSL for localhost VPS connections (default)
+ */
+
 let sequelize;
 const databaseUrl = process.env.DATABASE_URL;
+const nodeEnv = process.env.NODE_ENV || 'development';
+
+// Determine if SSL is required
+const determineSSL = (url) => {
+  if (!url) return false;
+  
+  // Force SSL via environment variable
+  if (process.env.DB_SSL === 'true') return true;
+  if (process.env.DB_SSL === 'false') return false;
+  
+  // External cloud providers need SSL
+  const cloudProviders = ['railway', 'heroku', 'supabase', 'neon', 'render'];
+  const isCloudProvider = cloudProviders.some(provider => url.includes(provider));
+  
+  // Localhost connections don't need SSL
+  const isLocalhost = url.includes('localhost') || url.includes('127.0.0.1');
+  
+  return isCloudProvider && !isLocalhost;
+};
 
 if (databaseUrl) {
-  // Detect if this is a Railway URL (internal or public)
-  // All Railway connections should use SSL
-  const isRailwayUrl = databaseUrl.includes('railway');
-  const requiresSSL = isRailwayUrl || process.env.DB_SSL === 'true';
+  const requiresSSL = determineSSL(databaseUrl);
   
   sequelize = new Sequelize(databaseUrl, {
     dialect: 'postgres',
-    logging: process.env.NODE_ENV === 'development' ? console.log : false,
+    logging: nodeEnv === 'development' ? console.log : false,
     pool: {
-      max: 5,
+      max: nodeEnv === 'production' ? 10 : 5,  // More connections in production
       min: 0,
       acquire: 30000,
       idle: 10000,
     },
-    dialectOptions: {
-      ssl: requiresSSL ? {
+    dialectOptions: requiresSSL ? {
+      ssl: {
         require: true,
         rejectUnauthorized: false
-      } : false
-    }
+      }
+    } : {}
   });
+  
+  console.log(`[DB] Using DATABASE_URL (SSL: ${requiresSSL ? 'enabled' : 'disabled'})`);
 } else {
-  // Fall back to individual environment variables
+  // Fallback to individual environment variables
   sequelize = new Sequelize(
     process.env.DB_NAME,
     process.env.DB_USER,
@@ -38,38 +63,37 @@ if (databaseUrl) {
       host: process.env.DB_HOST || 'localhost',
       port: process.env.DB_PORT || 5432,
       dialect: 'postgres',
-      logging: process.env.NODE_ENV === 'development' ? console.log : false,
+      logging: nodeEnv === 'development' ? console.log : false,
       pool: {
-        max: 5,
+        max: nodeEnv === 'production' ? 10 : 5,
         min: 0,
         acquire: 30000,
         idle: 10000,
       },
     }
   );
+  
+  console.log(`[DB] Using individual DB_* variables`);
 }
 
 const connectDB = async () => {
   try {
-    console.log('Attempting to connect to PostgreSQL...');
+    console.log('[DB] Connecting to PostgreSQL...');
+    console.log(`[DB] Environment: ${nodeEnv}`);
+    
     const databaseUrl = process.env.DATABASE_URL;
     
-    // Check if DATABASE_URL contains unreplaced Railway variable or placeholder (local development issue)
+    // Validate DATABASE_URL doesn't contain placeholders
     if (databaseUrl) {
-      if (databaseUrl.includes('${RAILWAY_PRIVATE_DOMAIN}')) {
-        throw new Error('DATABASE_URL contains unreplaced ${RAILWAY_PRIVATE_DOMAIN}. For local development, use Railway TCP Proxy URL instead.');
+      if (databaseUrl.includes('PLACEHOLDER') || databaseUrl.includes('YOUR_')) {
+        throw new Error('DATABASE_URL contains placeholder values. Please update with actual credentials.');
       }
-      if (databaseUrl.includes('YOUR_RAILWAY_TCP_PROXY_HOST') || databaseUrl.includes('PLACEHOLDER')) {
-        throw new Error('DATABASE_URL contains placeholder. Please update with your actual Railway TCP Proxy URL.');
-      }
-    }
-    
-    if (databaseUrl) {
-      // Mask password in connection string for logging
+      
+      // Mask password for logging
       const maskedUrl = databaseUrl.replace(/:[^:@]+@/, ':****@');
-      console.log('DB Config: Using DATABASE_URL:', maskedUrl);
+      console.log('[DB] Connection:', maskedUrl);
     } else {
-      console.log('DB Config:', {
+      console.log('[DB] Connection:', {
         host: process.env.DB_HOST || 'localhost',
         port: process.env.DB_PORT || 5432,
         database: process.env.DB_NAME,
@@ -78,43 +102,36 @@ const connectDB = async () => {
     }
     
     await sequelize.authenticate();
-    console.log('PostgreSQL Connected Successfully');
+    console.log('[DB] PostgreSQL connected successfully!');
     
-    // Sync models (use { alter: true } for development, remove in production)
-    // Note: Disabled alter to avoid SQL syntax errors with unique constraints
-    // Run SQL scripts manually to add columns (add-pincode-district-simple.sql)
-    if (process.env.NODE_ENV === 'development') {
+    // Sync models in development only
+    if (nodeEnv === 'development') {
       await sequelize.sync({ alter: false });
-      console.log('Database models synchronized (alter disabled to prevent constraint errors)');
+      console.log('[DB] Models synchronized');
     }
+    
   } catch (error) {
-    console.error('Unable to connect to PostgreSQL:');
-    console.error('Error Message:', error.message);
+    console.error('[DB] Connection failed!');
+    console.error('[DB] Error:', error.message);
     
-    // Provide helpful guidance for common connection issues
-    if (error.message && (error.message.includes('unreplaced ${RAILWAY_PRIVATE_DOMAIN}') || 
-        error.message.includes('placeholder') ||
-        (error.message.includes('ENOTFOUND') && (error.message.includes('$') || error.message.includes('${'))))) {
-      console.error('\n⚠️  Connection Error: DATABASE_URL not configured for local development');
-      console.error('\n${RAILWAY_PRIVATE_DOMAIN} only works when deployed on Railway.');
-      console.error('For LOCAL DEVELOPMENT, you need the Railway TCP Proxy URL:');
-      console.error('\n📋 Steps to fix:');
-      console.error('1. Go to Railway Dashboard > Your PostgreSQL Service');
-      console.error('2. Click on "Connect" or "Networking" tab');
-      console.error('3. Find "TCP Proxy" connection string');
-      console.error('4. In your .env file, uncomment and update DATABASE_URL:');
-      console.error('   DATABASE_URL=postgresql://postgres:tzzOfXFykOxoBedVcJTCvnsrQexhgFmR@YOUR_TCP_PROXY_HOST:PORT/railway');
-      console.error('\n   Example:');
-      console.error('   DATABASE_URL=postgresql://postgres:tzzOfXFykOxoBedVcJTCvnsrQexhgFmR@containers-us-west-xxx.railway.app:6543/railway');
-    } else if (!process.env.DATABASE_URL) {
-      console.error('\n⚠️  DATABASE_URL is not set in your .env file');
-      console.error('Please configure DATABASE_URL for local development (see .env file comments)');
-    } else if (error.message && error.message.includes('ENOTFOUND')) {
-      console.error('\n⚠️  Connection Error: Cannot resolve hostname');
-      console.error('Check your DATABASE_URL in .env file - the hostname may be incorrect');
+    // Helpful error guidance
+    if (error.message.includes('ENOTFOUND')) {
+      console.error('\n[DB] Hostname not found. Check your DATABASE_URL or DB_HOST.');
+    } else if (error.message.includes('ECONNREFUSED')) {
+      console.error('\n[DB] Connection refused. Ensure PostgreSQL is running.');
+      console.error('    On VPS: sudo systemctl status postgresql');
+    } else if (error.message.includes('authentication failed')) {
+      console.error('\n[DB] Authentication failed. Check username/password.');
+    } else if (error.message.includes('does not exist')) {
+      console.error('\n[DB] Database does not exist. Create it first.');
     }
     
-    console.error('\nFull Error:', error);
+    if (!process.env.DATABASE_URL && !process.env.DB_NAME) {
+      console.error('\n[DB] No database configuration found!');
+      console.error('    Set DATABASE_URL or DB_* variables in .env');
+    }
+    
+    console.error('\n[DB] Full error:', error);
     process.exit(1);
   }
 };

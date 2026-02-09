@@ -20,7 +20,7 @@ const Otp = sequelize.define(
       unique: false,
     },
     code: {
-      type: DataTypes.STRING(10),
+      type: DataTypes.STRING(255),
       allowNull: false,
     },
     expiresAt: {

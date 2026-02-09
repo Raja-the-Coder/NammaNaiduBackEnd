@@ -189,9 +189,7 @@ const sendEmail = async (to, subject, html, from = null) => {
   }
 
   throw new Error('No email provider configured. Set SENDGRID_API_KEY (recommended for Render Free), RESEND_API_KEY, or EMAIL_USER/EMAIL_PASS');
-};
-
-module.exports = { 
+};module.exports = { 
   sendEmail,
   sendEmailViaSendGrid,
   sendEmailViaResend,

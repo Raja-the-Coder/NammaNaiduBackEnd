@@ -20,6 +20,8 @@ const dashboardRoutes = require('./modules/admin/dashboard.routes');
 const adminNotificationRoutes = require('./modules/admin/notification.routes');
 const notificationRoutes = require('./modules/notifications/notification.routes');
 const deviceRoutes = require('./modules/devices/device.routes');
+const messageRoutes = require('./modules/messages/message.routes');
+const chatRoutes = require('./modules/chat/chat.routes');
 const errorHandler = require('./middleware/error.middleware');
 const { apiLogger, errorLogger } = require('./middleware/apiLogger.middleware');
 
@@ -60,6 +62,8 @@ app.use('/api/admin/notifications', adminNotificationRoutes);
 app.use('/api/admin', masterRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/devices', deviceRoutes);
+app.use('/api/messages', messageRoutes);
+app.use('/api/chat', chatRoutes);
 
 app.use((req, res) => {
   res.status(404).json({ message: 'Route not found' });

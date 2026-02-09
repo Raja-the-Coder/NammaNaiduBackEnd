@@ -147,6 +147,15 @@ const getFirebaseAdmin = () => {
 };
 
 /**
+ * Get Firestore instance for chat and other data
+ * @returns {admin.firestore.Firestore} Firestore instance
+ */
+const getFirestore = () => {
+  const adminInstance = getFirebaseAdmin();
+  return adminInstance.firestore();
+};
+
+/**
  * Get Firebase Messaging instance for sending push notifications
  * @returns {admin.messaging.Messaging} Firebase Messaging instance
  */
@@ -336,9 +345,11 @@ module.exports = {
   initializeFirebaseAdmin,
   getFirebaseAdmin,
   isFirebaseAdminInitialized,
+  getFirestore,
   getMessaging,
   sendNotification,
   sendMulticastNotification,
   sendTopicNotification,
+  admin,
 };
 

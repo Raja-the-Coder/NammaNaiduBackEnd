@@ -8,48 +8,45 @@ const {
   firebaseLogin,
   sendOtp,
   verifyOtp,
-  verifyMsg91Token,
+  refreshToken,
+  logout,
+  forgotPassword,
+  resetPassword,
 } = require('./auth.controller');
 const { validate } = require('../../middleware/validation.middleware');
+const { authenticate } = require('../../middleware/auth.middleware');
+const {
+  otpSendLimiter,
+  otpVerifyLimiter,
+  loginLimiter,
+  passwordResetLimiter,
+} = require('../../middleware/rateLimit.middleware');
 
 const router = express.Router();
 
-router.post(
-  '/send-otp',
-  [
-    body('name').trim().notEmpty().withMessage('Name is required'),
-    body('gender')
-      .trim()
-      .isIn(['Male', 'Female', 'Other'])
-      .withMessage('Gender must be Male, Female, or Other'),
-    body('mobile')
-      .trim()
-      .matches(/^[0-9]{6,15}$/)
-      .withMessage('Mobile number must contain only digits'),
-    body('email').optional().isEmail().withMessage('Please provide a valid email'),
-    body('countryCode').optional().trim(),
-    body('profileFor').optional().trim(),
-    validate,
-  ],
-  sendRegistrationOtp
-);
+// Deprecated: use POST /api/auth/otp/send and POST /api/auth/otp/verify instead.
+router.post('/send-otp', otpSendLimiter, (req, res) => {
+  const mobile = String(req.body.mobile || '').replace(/\D/g, '');
+  const countryCode = req.body.countryCode || '+91';
+  req.body = { isemailid: false, mobileno: countryCode + mobile };
+  sendOtp(req, res);
+});
 
-router.post(
-  '/verify-otp',
-  [
-    body('mobile').trim().notEmpty().withMessage('Mobile number is required'),
-    body('countryCode').optional().trim(),
-    body('otp').trim().notEmpty().withMessage('OTP is required'),
-    body('name').optional().trim(),
-    body('gender')
-      .optional()
-      .isIn(['Male', 'Female', 'Other'])
-      .withMessage('Gender must be Male, Female, or Other'),
-    body('profileFor').optional().trim(),
-    validate,
-  ],
-  verifyRegistrationOtp
-);
+router.post('/verify-otp', otpVerifyLimiter, (req, res) => {
+  const mobile = String(req.body.mobile || '').replace(/\D/g, '');
+  const countryCode = req.body.countryCode || '+91';
+  req.body = {
+    isemailid: false,
+    otp: req.body.otp,
+    mobileno: countryCode + mobile,
+    mobile: req.body.mobile,
+    countryCode,
+    name: req.body.name,
+    gender: req.body.gender,
+    profileFor: req.body.profileFor,
+  };
+  verifyOtp(req, res);
+});
 
 router.post(
   '/firebase-login',
@@ -84,6 +81,7 @@ router.post(
 // Login route (handles both user and admin login)
 router.post(
   '/login',
+  loginLimiter,
   [
     body('email').isEmail().withMessage('Please provide a valid email'),
     body('password').notEmpty().withMessage('Password is required'),
@@ -95,6 +93,7 @@ router.post(
 // New OTP endpoints
 router.post(
   '/otp/send',
+  otpSendLimiter,
   [
     body('isemailid').isBoolean().withMessage('isemailid must be a boolean'),
     body('mobileno')
@@ -113,6 +112,7 @@ router.post(
 
 router.post(
   '/otp/verify',
+  otpVerifyLimiter,
   [
     body('isemailid').isBoolean().withMessage('isemailid must be a boolean'),
     body('otp').trim().notEmpty().withMessage('OTP is required'),
@@ -125,24 +125,82 @@ router.post(
       .optional()
       .isEmail()
       .withMessage('Please provide a valid email'),
-    body('msg91AccessToken')
-      .optional()
-      .trim()
-      .notEmpty()
-      .withMessage('MSG91 access token must not be empty if provided'),
+    body('name').optional().trim(),
+    body('gender').optional().trim().isIn(['Male', 'Female', 'Other']).withMessage('Gender must be Male, Female, or Other'),
+    body('profileFor').optional().trim(),
+    body('mobile').optional().trim(),
+    body('countryCode').optional().trim(),
     validate,
   ],
   verifyOtp
 );
 
-// MSG91 token verification endpoint
+// Resend OTP (supports SMS retry via MSG91 voice/text)
 router.post(
-  '/msg91/verify-token',
+  '/otp/resend',
+  otpSendLimiter,
   [
-    body('accessToken').trim().notEmpty().withMessage('Access token is required'),
+    body('isemailid').isBoolean().withMessage('isemailid must be a boolean'),
+    body('mobileno')
+      .optional()
+      .trim()
+      .matches(/^\+?[1-9]\d{1,14}$/)
+      .withMessage('Please provide a valid mobile number'),
+    body('mailid')
+      .optional()
+      .isEmail()
+      .withMessage('Please provide a valid email'),
+    body('retryType')
+      .optional()
+      .trim()
+      .isIn(['text', 'voice'])
+      .withMessage('retryType must be text or voice'),
     validate,
   ],
-  verifyMsg91Token
+  sendOtp // reuses sendOtp with retryType flag
+);
+
+// Refresh token - exchange refresh token for new access token
+router.post(
+  '/refresh-token',
+  [
+    body('refreshToken').trim().notEmpty().withMessage('Refresh token is required'),
+    validate,
+  ],
+  refreshToken
+);
+
+// Logout - revoke refresh token
+router.post(
+  '/logout',
+  authenticate,
+  logout
+);
+
+// Forgot password - send reset OTP to email
+router.post(
+  '/forgot-password',
+  passwordResetLimiter,
+  [
+    body('email').isEmail().withMessage('Please provide a valid email'),
+    validate,
+  ],
+  forgotPassword
+);
+
+// Reset password - verify OTP and set new password
+router.post(
+  '/reset-password',
+  passwordResetLimiter,
+  [
+    body('email').isEmail().withMessage('Please provide a valid email'),
+    body('otp').trim().notEmpty().withMessage('OTP is required'),
+    body('newPassword')
+      .isLength({ min: 6 })
+      .withMessage('Password must be at least 6 characters'),
+    validate,
+  ],
+  resetPassword
 );
 
 module.exports = router;

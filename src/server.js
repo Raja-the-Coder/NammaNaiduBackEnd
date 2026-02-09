@@ -13,6 +13,9 @@ require('./models/ProfileView.model');
 require('./models/PersonPhoto.model');
 require('./models/Notification.model');
 require('./models/DeviceToken.model');
+require('./models/Conversation.model');
+require('./models/Message.model');
+require('./models/RefreshToken.model');
 
 const app = require('./app');
 const { connectDB } = require('./config/database');

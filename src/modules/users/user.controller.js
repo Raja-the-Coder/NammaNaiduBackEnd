@@ -7,6 +7,132 @@ const Notification = require('../../models/Notification.model');
 const PersonPhoto = require('../../models/PersonPhoto.model');
 const HoroscopeDetail = require('../../models/HoroscopeDetail.model');
 const Hobby = require('../../models/Hobby.model');
+const FamilyDetail = require('../../models/FamilyDetail.model');
+
+// ----- Flow: /me, profile completion, registration progress -----
+
+const computeProfileCompletion = (user, basicDetail, horoscopeDetail, familyDetail, hobby) => {
+  let score = 0;
+  const max = 100;
+  if (user && user.name) score += 15;
+  if (user && user.gender) score += 10;
+  if (basicDetail && basicDetail.dateOfBirth) score += 15;
+  if (basicDetail && basicDetail.maritalStatus) score += 10;
+  if (basicDetail && basicDetail.religion) score += 10;
+  if (basicDetail && (basicDetail.country || basicDetail.city)) score += 10;
+  if (basicDetail && basicDetail.education) score += 5;
+  if (basicDetail && basicDetail.occupation) score += 5;
+  if (horoscopeDetail && (horoscopeDetail.rasi || horoscopeDetail.natchathiram)) score += 5;
+  if (familyDetail && familyDetail.fatherName) score += 5;
+  if (hobby && (hobby.hobbies?.length || hobby.languages?.length)) score += 5;
+  return Math.min(score, max);
+};
+
+const getCompletedRegistrationSteps = async (accountId) => {
+  const steps = [];
+  const user = await User.findOne({ where: { accountId }, attributes: ['accountId', 'email', 'password'] });
+  if (!user) return steps;
+  const basicDetail = await BasicDetail.findOne({ where: { accountId } });
+  const hasStep1 = !!(basicDetail?.dateOfBirth && user.email);
+  if (hasStep1) steps.push(1);
+  const hasStep2 = !!(basicDetail?.religion || basicDetail?.maritalStatus || basicDetail?.country || basicDetail?.city);
+  if (hasStep2) steps.push(2);
+  const hasStep3 = !!(basicDetail?.education || basicDetail?.occupation || basicDetail?.annualIncome);
+  if (hasStep3) steps.push(3);
+  const familyDetail = await FamilyDetail.findOne({ where: { accountId } });
+  const hasStep4 = !!(basicDetail?.aboutFamily || (familyDetail && familyDetail.fatherName));
+  if (hasStep4) steps.push(4);
+  return steps.sort((a, b) => a - b);
+};
+
+// GET /api/users/me - current user summary: token balance, profile completion, next step
+const getMe = async (req, res) => {
+  try {
+    const accountId = req.accountId;
+    const user = await User.findOne({
+      where: { accountId },
+      include: [
+        { model: BasicDetail, as: 'basicDetail', required: false },
+        { model: HoroscopeDetail, as: 'horoscopeDetail', required: false },
+        { model: FamilyDetail, as: 'familyDetail', required: false },
+        { model: Hobby, as: 'hobby', required: false },
+      ],
+    });
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+    const u = user.toJSON();
+    const completion = computeProfileCompletion(
+      u,
+      u.basicDetail,
+      u.horoscopeDetail,
+      u.familyDetail,
+      u.hobby
+    );
+    const completedSteps = await getCompletedRegistrationSteps(accountId);
+    let nextStep = null;
+    if (completedSteps.length < 4) {
+      const next = [1, 2, 3, 4].find((s) => !completedSteps.includes(s));
+      nextStep = next ? `/profile-step-${next}` : null;
+    }
+    res.json({
+      success: true,
+      data: {
+        user: { id: user.id, accountId: user.accountId, userCode: user.userCode, name: user.name, email: user.email, gender: user.gender },
+        profileViewTokens: user.profileViewTokens ?? 0,
+        profileCompletion: completion,
+        completedRegistrationSteps: completedSteps,
+        nextStep,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message || 'Failed to get me' });
+  }
+};
+
+// GET /api/users/profile/complete - unified profile (user + basicDetail + horoscope + family + hobbies)
+const getProfileComplete = async (req, res) => {
+  try {
+    const accountId = req.accountId;
+    const user = await User.findOne({
+      where: { accountId },
+      include: [
+        { model: BasicDetail, as: 'basicDetail', required: false },
+        { model: HoroscopeDetail, as: 'horoscopeDetail', required: false },
+        { model: FamilyDetail, as: 'familyDetail', required: false },
+        { model: Hobby, as: 'hobby', required: false },
+        { model: PersonPhoto, as: 'personPhoto', required: false },
+      ],
+    });
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+    const data = user.toJSON();
+    delete data.password;
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message || 'Failed to get complete profile' });
+  }
+};
+
+// GET /api/users/registration-progress - completed steps and next step
+const getRegistrationProgress = async (req, res) => {
+  try {
+    const accountId = req.accountId;
+    const completedSteps = await getCompletedRegistrationSteps(accountId);
+    const nextStep = [1, 2, 3, 4].find((s) => !completedSteps.includes(s));
+    res.json({
+      success: true,
+      data: {
+        completedSteps,
+        nextStep: nextStep ? `step${nextStep}` : null,
+        nextStepRoute: nextStep ? `/profile-step-${nextStep}` : null,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message || 'Failed to get registration progress' });
+  }
+};
 
 // Get current user profile
 const getProfile = async (req, res) => {
@@ -572,40 +698,106 @@ const saveBasicDetails = async (req, res) => {
   } catch (error) {
     console.error('Error saving basic details:', error);
     console.error('Error message:', error.message);
-    console.error('Error stack:', error.stack);
-
-    // Check if it's a database column error
     if (error.message && (error.message.includes('column') && error.message.includes('does not exist'))) {
       const errorMsg = error.message.toLowerCase();
-      let migrationScript = 'migrations/run-vegetarian-migration.js';
       let columnName = 'vegetarian';
-      
-      if (errorMsg.includes('vegetarian')) {
-        migrationScript = 'migrations/run-vegetarian-migration.js';
-        columnName = 'vegetarian';
-      } else if (errorMsg.includes('pincode') || errorMsg.includes('district')) {
-        migrationScript = 'Check existing migration scripts for pincode/district';
-        columnName = 'pincode/district';
-      }
-      
+      if (errorMsg.includes('pincode') || errorMsg.includes('district')) columnName = 'pincode/district';
       return res.status(500).json({
         success: false,
-        message: `Database column error: ${error.message}`,
-        error: `Migration required: basic_details table needs ${columnName} column`,
-        instructions: [
-          '1. Navigate to the migrations folder: cd migrations',
-          `2. Run the migration: node ${migrationScript.split('/').pop()}`,
-          '3. Restart your backend server',
-          '4. Try registering again'
-        ],
-        migrationScript: migrationScript
+        message: `Database column error. Migration may be required for ${columnName}.`,
+        error: error.message,
       });
     }
-
     res.status(500).json({
       success: false,
       message: error.message || 'Failed to save basic details',
     });
+  }
+};
+
+// POST /api/users/profile/sections/:section - save wizard step (step1, step2, step3, step4)
+const saveProfileSection = async (req, res) => {
+  try {
+    const accountId = req.accountId;
+    const section = (req.params.section || '').toLowerCase();
+    const allowed = ['step1', 'step2', 'step3', 'step4'];
+    if (!allowed.includes(section)) {
+      return res.status(400).json({ success: false, message: 'Invalid section. Use step1, step2, step3, or step4' });
+    }
+    const user = await User.findOne({ where: { accountId } });
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+    const body = req.body || {};
+    let [basicDetail] = await BasicDetail.findOrCreate({
+      where: { accountId },
+      defaults: { accountId },
+    });
+    if (section === 'step1') {
+      if (body.email && body.email !== user.email) {
+        const dup = await User.findOne({ where: { email: body.email }, attributes: ['accountId'] });
+        if (dup && dup.accountId !== accountId) {
+          return res.status(400).json({ success: false, message: 'Email is already in use' });
+        }
+        user.email = body.email;
+      }
+      if (body.password) user.password = body.password;
+      await user.save();
+      const dob = resolveDateOfBirth({
+        dateOfBirth: body.dateOfBirth,
+        dobDay: body.dobDay,
+        dobMonth: body.dobMonth,
+        dobYear: body.dobYear,
+      });
+      if (dob || body.height || body.physicalStatus || body.maritalStatus) {
+        await basicDetail.update({
+          dateOfBirth: dob || basicDetail.dateOfBirth,
+          height: body.height ?? basicDetail.height,
+          physicalStatus: body.physicalStatus ?? basicDetail.physicalStatus,
+          maritalStatus: body.maritalStatus ?? basicDetail.maritalStatus,
+        });
+      }
+    } else if (section === 'step2') {
+      const payload = {};
+      ['religion', 'caste', 'subcaste', 'willingToMarryFromAnyCaste', 'dosham', 'country', 'state', 'city', 'pincode', 'district'].forEach((k) => {
+        if (body[k] !== undefined) payload[k] = body[k];
+      });
+      if (body.willingToMarryFromAnyCaste === 'true') payload.willingToMarryFromAnyCaste = true;
+      if (body.willingToMarryFromAnyCaste === 'false') payload.willingToMarryFromAnyCaste = false;
+      if (Object.keys(payload).length) await basicDetail.update(payload);
+    } else if (section === 'step3') {
+      const payload = {};
+      ['education', 'employmentType', 'occupation', 'currency', 'annualIncome'].forEach((k) => {
+        if (body[k] !== undefined) payload[k] = body[k];
+      });
+      if (Object.keys(payload).length) await basicDetail.update(payload);
+    } else if (section === 'step4') {
+      const payload = {};
+      ['familyStatus', 'familyType', 'familyValues', 'aboutFamily'].forEach((k) => {
+        if (body[k] !== undefined) payload[k] = body[k];
+      });
+      if (Object.keys(payload).length) await basicDetail.update(payload);
+      if (body.fatherName || body.motherName) {
+        const FamilyDetail = require('../../models/FamilyDetail.model');
+        const [familyDetail] = await FamilyDetail.findOrCreate({
+          where: { accountId },
+          defaults: { accountId },
+        });
+        const famPayload = {};
+        ['fatherName', 'fatherOccupation', 'fatherStatus', 'motherName', 'motherOccupation', 'motherStatus', 'siblings'].forEach((k) => {
+          if (body[k] !== undefined) famPayload[k] = body[k];
+        });
+        if (Object.keys(famPayload).length) await familyDetail.update(famPayload);
+      }
+    }
+    res.json({
+      success: true,
+      message: `Section ${section} saved successfully`,
+      data: { section, completed: true },
+    });
+  } catch (error) {
+    console.error('Error saving profile section:', error);
+    res.status(500).json({ success: false, message: error.message || 'Failed to save section' });
   }
 };
 
@@ -663,6 +855,19 @@ const createProfileAction = async (req, res) => {
         success: false,
         message: 'Cannot perform action on your own profile',
       });
+    }
+
+    // State machine: accept only when target has sent interest to me
+    if (actionType === 'accept') {
+      const theySentInterest = await ProfileAction.findOne({
+        where: { userId: targetUserId, targetUserId: userId, actionType: 'interest' },
+      });
+      if (!theySentInterest) {
+        return res.status(400).json({
+          success: false,
+          message: 'You can only accept interest from someone who has sent you interest.',
+        });
+      }
     }
 
     // Find or create the action
@@ -930,6 +1135,55 @@ const getReceivedProfileActions = async (req, res) => {
       success: false,
       message: error.message || 'Failed to get received profile actions',
     });
+  }
+};
+
+// GET /api/users/matches - mutual matches (both sent interest or one accepted)
+const getMutualMatches = async (req, res) => {
+  try {
+    const userId = req.accountId;
+    const sent = await ProfileAction.findAll({
+      where: { userId, actionType: { [Op.in]: ['interest', 'accept'] } },
+      attributes: ['targetUserId', 'actionType'],
+    });
+    const received = await ProfileAction.findAll({
+      where: { targetUserId: userId, actionType: { [Op.in]: ['interest', 'accept'] } },
+      attributes: ['userId', 'actionType'],
+    });
+    const sentMap = {}; // targetUserId -> my action
+    sent.forEach((a) => { sentMap[a.targetUserId] = a.actionType; });
+    const receivedMap = {}; // userId -> their action
+    received.forEach((a) => { receivedMap[a.userId] = a.actionType; });
+    const matchAccountIds = new Set();
+    Object.keys(sentMap).forEach((tid) => {
+      const myAction = sentMap[tid];
+      const theirAction = receivedMap[tid];
+      if (myAction === 'accept' && theirAction === 'interest') matchAccountIds.add(tid);
+      if (myAction === 'interest' && theirAction === 'accept') matchAccountIds.add(tid);
+      if (myAction === 'interest' && theirAction === 'interest') matchAccountIds.add(tid);
+    });
+    Object.keys(receivedMap).forEach((tid) => {
+      const myAction = sentMap[tid];
+      const theirAction = receivedMap[tid];
+      if (myAction === 'interest' && theirAction === 'accept') matchAccountIds.add(tid);
+      if (myAction === 'interest' && theirAction === 'interest') matchAccountIds.add(tid);
+    });
+    const ids = [...matchAccountIds];
+    if (ids.length === 0) {
+      return res.json({ success: true, count: 0, data: [] });
+    }
+    const users = await User.findAll({
+      where: { accountId: { [Op.in]: ids } },
+      include: [
+        { model: BasicDetail, as: 'basicDetail', required: false },
+        { model: PersonPhoto, as: 'personPhoto', required: false },
+      ],
+      attributes: { exclude: ['password'] },
+    });
+    res.json({ success: true, count: users.length, data: users.map((u) => u.toJSON()) });
+  } catch (error) {
+    console.error('Error getting matches:', error);
+    res.status(500).json({ success: false, message: error.message || 'Failed to get matches' });
   }
 };
 
@@ -1313,6 +1567,10 @@ const searchProfiles = async (req, res) => {
 };
 
 module.exports = {
+  getMe,
+  getProfileComplete,
+  getRegistrationProgress,
+  saveProfileSection,
   getProfile,
   updateProfile,
   getAllUsers,
@@ -1322,6 +1580,7 @@ module.exports = {
   getProfileAction,
   getMyProfileActions,
   getReceivedProfileActions,
+  getMatches: getMutualMatches,
   getOppositeGenderProfiles,
   getProfileByAccountId,
   viewProfileDetails,

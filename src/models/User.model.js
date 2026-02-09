@@ -106,6 +106,10 @@ const User = sequelize.define(
       allowNull: false,
       defaultValue: 3,
     },
+    lastLoginAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
   },
   {
     tableName: 'users',

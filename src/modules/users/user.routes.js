@@ -1,6 +1,10 @@
 const express = require('express');
 const { body } = require('express-validator');
 const {
+  getMe,
+  getProfileComplete,
+  getRegistrationProgress,
+  saveProfileSection,
   getProfile,
   updateProfile,
   getAllUsers,
@@ -10,6 +14,7 @@ const {
   getProfileAction,
   getMyProfileActions,
   getReceivedProfileActions,
+  getMatches,
   getOppositeGenderProfiles,
   getProfileByAccountId,
   viewProfileDetails,
@@ -24,7 +29,17 @@ const router = express.Router();
 // All routes require authentication
 router.use(authenticate);
 
+// ----- Flow: me, profile complete, registration progress, sections, matches -----
+router.get('/me', getMe);
+router.get('/registration-progress', getRegistrationProgress);
+router.get('/matches', getMatches);
+
 // IMPORTANT: More specific routes (with parameters) should come BEFORE less specific routes
+// Get complete profile (unified) - must come before /profile/:accountId
+router.get('/profile/complete', getProfileComplete);
+// Save wizard section (step1, step2, step3, step4)
+router.post('/profile/sections/:section', saveProfileSection);
+
 // Get user profile by accountId (for viewing other users' profiles) - must come before /profile
 router.get('/profile/:accountId', getProfileByAccountId);
 

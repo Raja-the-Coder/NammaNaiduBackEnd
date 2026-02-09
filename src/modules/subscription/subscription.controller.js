@@ -1,7 +1,48 @@
 const { v4: uuidv4 } = require('uuid');
+const { Op } = require('sequelize');
 const SubscriptionPlan = require('../../models/SubscriptionPlan.model');
 const SubscriptionTransaction = require('../../models/SubscriptionTransaction.model');
 const User = require('../../models/User.model');
+
+// GET /api/subscription/status - current user's subscription status
+const getSubscriptionStatus = async (req, res) => {
+    try {
+        const accountId = req.accountId;
+        const user = await User.findOne({ where: { accountId } });
+        if (!user) {
+            return res.status(404).json({ success: false, message: 'User not found' });
+        }
+        const lastSuccess = await SubscriptionTransaction.findOne({
+            where: { userId: user.id, status: 'success' },
+            order: [['createdAt', 'DESC']],
+            include: [{ model: SubscriptionPlan, as: 'plan', attributes: ['id', 'planName', 'maxProfile', 'validMonth'] }],
+        });
+        const isPaid = !!lastSuccess;
+        let expiresAt = null;
+        let planName = null;
+        let featuresEnabled = ['basic_search', 'view_profiles_limited'];
+        if (lastSuccess && lastSuccess.plan) {
+            planName = lastSuccess.plan.planName;
+            const validMonths = lastSuccess.plan.validMonth || 1;
+            expiresAt = new Date(lastSuccess.createdAt);
+            expiresAt.setMonth(expiresAt.getMonth() + validMonths);
+            featuresEnabled = ['basic_search', 'view_profiles_limited', 'unlimited_views', 'contact_view'];
+        }
+        res.json({
+            success: true,
+            data: {
+                isPaid,
+                planName: planName || 'Free',
+                expiresAt: expiresAt ? expiresAt.toISOString() : null,
+                profileViewTokens: user.profileViewTokens ?? 0,
+                featuresEnabled,
+            },
+        });
+    } catch (error) {
+        console.error('Error getting subscription status:', error);
+        res.status(500).json({ success: false, message: error.message || 'Failed to get subscription status' });
+    }
+};
 
 // Mock Purchase Subscription
 const mockPurchaseSubscription = async (req, res) => {
@@ -74,5 +115,6 @@ const mockPurchaseSubscription = async (req, res) => {
 };
 
 module.exports = {
+    getSubscriptionStatus,
     mockPurchaseSubscription,
 };
