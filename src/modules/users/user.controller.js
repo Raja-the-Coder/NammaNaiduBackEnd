@@ -9,6 +9,12 @@ const HoroscopeDetail = require('../../models/HoroscopeDetail.model');
 const Hobby = require('../../models/Hobby.model');
 const FamilyDetail = require('../../models/FamilyDetail.model');
 const PartnerPreference = require('../../models/PartnerPreference.model');
+const {
+  detectAndCreateMatch,
+  checkDailyActionLimit,
+  computeCompatibility,
+  buildPreferenceFilter,
+} = require('../../services/matchmaking.service');
 
 // ----- Flow: /me, profile completion, registration progress -----
 
@@ -935,6 +941,17 @@ const createProfileAction = async (req, res) => {
       });
     }
 
+    // ── Daily action limit check ──
+    const limitCheck = await checkDailyActionLimit(userId);
+    if (!limitCheck.allowed) {
+      return res.status(429).json({
+        success: false,
+        message: `Daily limit reached (${limitCheck.used}/${limitCheck.limit}). Upgrade your plan for more.`,
+        dailyUsed: limitCheck.used,
+        dailyLimit: limitCheck.limit,
+      });
+    }
+
     // Check if target user exists
     const targetUser = await User.findOne({ where: { accountId: targetUserId } });
     if (!targetUser) {
@@ -985,6 +1002,16 @@ const createProfileAction = async (req, res) => {
       await profileAction.update({
         actionType,
       });
+    }
+
+    // ── Mutual match detection ──
+    let matchCreated = null;
+    if (actionType === 'interest' || actionType === 'accept') {
+      try {
+        matchCreated = await detectAndCreateMatch(userId, targetUserId, actionType);
+      } catch (matchErr) {
+        console.error('Match detection error (non-blocking):', matchErr.message);
+      }
     }
 
     // Trigger Notification
@@ -1043,10 +1070,41 @@ const createProfileAction = async (req, res) => {
       // Non-blocking, continue response
     }
 
+    // ── Send match notification to BOTH users if match was created ──
+    if (matchCreated) {
+      try {
+        const currentUser = await User.findOne({ where: { accountId: userId } });
+        const matchNotifTitle = 'It\'s a Match!';
+
+        // Notify the target user
+        await Notification.create({
+          userId: targetUserId,
+          senderId: userId,
+          type: 'match',
+          title: matchNotifTitle,
+          message: `You and ${currentUser?.name || 'a member'} are now matched!`,
+          relatedId: matchCreated.id.toString(),
+        });
+        // Notify the actor (self)
+        await Notification.create({
+          userId: userId,
+          senderId: targetUserId,
+          type: 'match',
+          title: matchNotifTitle,
+          message: `You and ${targetUser.name} are now matched!`,
+          relatedId: matchCreated.id.toString(),
+        });
+      } catch (matchNotifErr) {
+        console.error('Match notification error (non-blocking):', matchNotifErr.message);
+      }
+    }
+
     res.json({
       success: true,
       message: `Profile ${actionType} ${created ? 'created' : 'updated'} successfully`,
       data: profileAction,
+      match: matchCreated ? { id: matchCreated.id, score: matchCreated.matchScore, type: matchCreated.matchType } : null,
+      dailyLimitInfo: { used: limitCheck.used + 1, limit: limitCheck.limit },
     });
   } catch (error) {
     console.error('Error creating profile action:', error);
@@ -1348,6 +1406,21 @@ const getOppositeGenderProfiles = async (req, res) => {
 
     console.log('Searching for opposite gender:', oppositeGender);
 
+    // ── Preference-based filtering (optional via ?usePreferences=true) ──
+    const usePreferences = req.query.usePreferences === 'true';
+    let myPrefs = null;
+    let prefBasicWhere = {};
+    let hasPrefFilter = false;
+
+    if (usePreferences) {
+      myPrefs = await PartnerPreference.findOne({ where: { accountId: currentUser.accountId } });
+      if (myPrefs) {
+        const filterResult = buildPreferenceFilter(myPrefs);
+        prefBasicWhere = filterResult.basicWhere;
+        hasPrefFilter = filterResult.hasFilter;
+      }
+    }
+
     // Find all users with opposite gender, excluding the current user
     // Filter by visibility: exclude 'hidden' profiles; only show 'public' or 'members' (default)
     const oppositeGenderUsers = await User.findAll({
@@ -1479,8 +1552,8 @@ const getOppositeGenderProfiles = async (req, res) => {
       }
     }
 
-    // Format the response data and attach BasicDetails and Photos
-    const profiles = oppositeGenderUsers.map((user) => {
+    // Format the response data and attach BasicDetails, Photos, and compatibility scores
+    let profiles = oppositeGenderUsers.map((user) => {
       const userData = user.toJSON();
       // Attach basicDetail if it exists
       if (basicDetailsMap[userData.accountId]) {
@@ -1490,8 +1563,30 @@ const getOppositeGenderProfiles = async (req, res) => {
       if (photosMap[userData.accountId]) {
         userData.personPhoto = photosMap[userData.accountId];
       }
+      // Compute compatibility score if preferences exist
+      if (myPrefs) {
+        const compat = computeCompatibility(myPrefs, userData, userData.basicDetail);
+        userData.compatibilityScore = compat.total;
+        userData.matchReason = compat.reasons;
+      }
       return userData;
     });
+
+    // If using preferences, filter by age range and sort by compatibility score
+    if (usePreferences && myPrefs) {
+      if (myPrefs.ageMin || myPrefs.ageMax) {
+        const ageMin = myPrefs.ageMin || 18;
+        const ageMax = myPrefs.ageMax || 100;
+        profiles = profiles.filter((p) => {
+          const dob = p.dateOfBirth || p.basicDetail?.dateOfBirth;
+          if (!dob) return true; // Keep profiles without DOB
+          const age = new Date().getFullYear() - new Date(dob).getFullYear();
+          return age >= ageMin && age <= ageMax;
+        });
+      }
+      // Sort by compatibility score descending
+      profiles.sort((a, b) => (b.compatibilityScore || 0) - (a.compatibilityScore || 0));
+    }
 
     console.log(`Found ${profiles.length} profiles`);
 
@@ -1500,6 +1595,7 @@ const getOppositeGenderProfiles = async (req, res) => {
       count: profiles.length,
       currentUserGender: currentUser.gender,
       oppositeGender: oppositeGender,
+      preferencesApplied: usePreferences && !!myPrefs,
       data: profiles,
     });
   } catch (error) {

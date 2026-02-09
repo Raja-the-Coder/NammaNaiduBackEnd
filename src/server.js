@@ -17,6 +17,8 @@ require('./models/Conversation.model');
 require('./models/Message.model');
 require('./models/RefreshToken.model');
 require('./models/PartnerPreference.model');
+require('./models/Match.model');
+require('./models/DailyRecommendation.model');
 
 const app = require('./app');
 const { connectDB } = require('./config/database');
@@ -57,6 +59,28 @@ const startServer = async () => {
 
   const server = app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
+
+    // ── Daily Recommendations Cron Job (runs at 2:00 AM IST every day) ──
+    try {
+      const cron = require('node-cron');
+      const { generateAllRecommendations } = require('./services/matchmaking.service');
+
+      // 2:00 AM IST = 20:30 UTC (previous day)
+      cron.schedule('30 20 * * *', async () => {
+        console.log('[Cron] Running daily recommendations generation...');
+        try {
+          const result = await generateAllRecommendations();
+          console.log('[Cron] Daily recommendations complete:', result);
+        } catch (err) {
+          console.error('[Cron] Daily recommendations failed:', err.message);
+        }
+      }, { timezone: 'UTC' });
+
+      console.log('✅ Daily recommendations cron job scheduled (2:00 AM IST)');
+    } catch (cronErr) {
+      console.warn('⚠️  node-cron not available, daily recommendations cron disabled:', cronErr.message);
+      console.log('   Install with: npm install node-cron');
+    }
   });
 
   server.on('error', (error) => {

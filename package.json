@@ -35,6 +35,7 @@
     "helmet": "^7.1.0",
     "jsonwebtoken": "^9.0.2",
     "morgan": "^1.10.0",
+    "node-cron": "^3.0.3",
     "nodemailer": "^7.0.12",
     "pg": "^8.11.3",
     "pg-hstore": "^2.3.4",

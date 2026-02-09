@@ -14,7 +14,6 @@ const {
   getProfileAction,
   getMyProfileActions,
   getReceivedProfileActions,
-  getMatches,
   getOppositeGenderProfiles,
   getProfileByAccountId,
   viewProfileDetails,
@@ -27,6 +26,13 @@ const {
   getPartnerPreferences,
   savePartnerPreferences,
 } = require('./partnerPreference.controller');
+const {
+  getMatches,
+  getRecommendations,
+  getCompatibility,
+  unmatch,
+  updateRecommendationAction,
+} = require('./matchmaking.controller');
 const photoRoutes = require('./photo.routes');
 const { authenticate } = require('../../middleware/auth.middleware');
 const { validate } = require('../../middleware/validation.middleware');
@@ -40,6 +46,13 @@ router.use(authenticate);
 router.get('/me', getMe);
 router.get('/registration-progress', getRegistrationProgress);
 router.get('/matches', getMatches);
+router.post('/matches/:matchId/unmatch', unmatch);
+router.get('/recommendations', getRecommendations);
+router.put('/recommendations/:id/action', [
+  body('action').isIn(['interest', 'shortlist', 'reject', 'skipped']).withMessage('Invalid action'),
+  validate,
+], updateRecommendationAction);
+router.get('/compatibility/:accountId', getCompatibility);
 
 // IMPORTANT: More specific routes (with parameters) should come BEFORE less specific routes
 // Get complete profile (unified) - must come before /profile/:accountId
