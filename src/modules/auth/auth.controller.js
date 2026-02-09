@@ -561,112 +561,32 @@ const sendOtp = async (req, res) => {
         }
       }
     } else {
-      // ========== MOBILE OTP via MSG91 ==========
-      const useMsg91 = isMsg91Configured();
+      // ========== MOBILE OTP — TEMPORARY: MSG91 bypassed, DB-only ==========
+      // TODO: Re-enable MSG91 when SMS provider is fixed
+      const [otpRecord, created] = await Otp.findOrCreate({
+        where: { phone: mobileno },
+        defaults: {
+          phone: mobileno,
+          email: null,
+          code: hashedCode,
+          expiresAt,
+          attempts: 0,
+          verified: false,
+          payload: { provider: 'none' },
+        },
+      });
 
-      if (useMsg91) {
-        try {
-          // Check if this is a resend/retry request
-          if (retryType && existingOtp) {
-            // Use MSG91 resend (does not need new OTP record)
-            const retryResult = await resendOtpViaMSG91(mobileno, retryType === 'voice' ? 'voice' : 'text');
-            console.log('✅ MSG91 OTP resent via', retryType, 'to:', mobileno);
-
-            // Update attempts reset in our DB
-            if (existingOtp) {
-              existingOtp.attempts = 0;
-              existingOtp.verified = false;
-              existingOtp.expiresAt = expiresAt;
-              await existingOtp.save();
-            }
-
-            smsSent = true;
-          } else {
-            // Send fresh OTP via MSG91
-            // MSG91 generates and delivers OTP via their template
-            const msg91Result = await sendOtpViaMSG91(mobileno, otpCode);
-            smsSent = true;
-            console.log('✅ MSG91 OTP sent to:', mobileno);
-
-            // Store hashed OTP in our DB as well (for fallback verification & tracking)
-            const [otpRecord, created] = await Otp.findOrCreate({
-              where: { phone: mobileno },
-              defaults: {
-                phone: mobileno,
-                email: null,
-                code: hashedCode,
-                expiresAt,
-                attempts: 0,
-                verified: false,
-                payload: { provider: 'msg91', requestId: msg91Result.requestId },
-              },
-            });
-
-            if (!created) {
-              otpRecord.code = hashedCode;
-              otpRecord.expiresAt = expiresAt;
-              otpRecord.attempts = 0;
-              otpRecord.verified = false;
-              otpRecord.payload = { provider: 'msg91', requestId: msg91Result.requestId };
-              await otpRecord.save();
-            }
-          }
-        } catch (msg91Err) {
-          smsError = msg91Err;
-          console.error('❌ MSG91 OTP sending failed:', msg91Err.message);
-          console.log('⚠️  Falling back to DB-only OTP storage...');
-
-          // Fallback: store hashed OTP in DB even if MSG91 fails
-          const [otpRecord, created] = await Otp.findOrCreate({
-            where: { phone: mobileno },
-            defaults: {
-              phone: mobileno,
-              email: null,
-              code: hashedCode,
-              expiresAt,
-              attempts: 0,
-              verified: false,
-              payload: { provider: 'fallback' },
-            },
-          });
-
-          if (!created) {
-            otpRecord.code = hashedCode;
-            otpRecord.expiresAt = expiresAt;
-            otpRecord.attempts = 0;
-            otpRecord.verified = false;
-            otpRecord.payload = { provider: 'fallback' };
-            await otpRecord.save();
-          }
-        }
-      } else {
-        // MSG91 not configured — store hashed OTP in DB only (dev/test mode)
-        const [otpRecord, created] = await Otp.findOrCreate({
-          where: { phone: mobileno },
-          defaults: {
-            phone: mobileno,
-            email: null,
-            code: hashedCode,
-            expiresAt,
-            attempts: 0,
-            verified: false,
-            payload: { provider: 'none' },
-          },
-        });
-
-        if (!created) {
-          otpRecord.code = hashedCode;
-          otpRecord.expiresAt = expiresAt;
-          otpRecord.attempts = 0;
-          otpRecord.verified = false;
-          otpRecord.payload = { provider: 'none' };
-          await otpRecord.save();
-        }
-
-        console.log('📱 MSG91 not configured. OTP stored in DB only.');
-        console.log('   Mobile:', mobileno, '| OTP:', otpCode);
-        console.log('   Set MSG91_AUTH_KEY and MSG91_OTP_TEMPLATE_ID in .env to enable SMS.');
+      if (!created) {
+        otpRecord.code = hashedCode;
+        otpRecord.expiresAt = expiresAt;
+        otpRecord.attempts = 0;
+        otpRecord.verified = false;
+        otpRecord.payload = { provider: 'none' };
+        await otpRecord.save();
       }
+
+      console.log('📱 [TEMPORARY] MSG91 bypassed. OTP stored in DB only.');
+      console.log('   Mobile:', mobileno, '| OTP:', otpCode);
     }
 
     console.log('✅ OTP record processed for', { identifier, expiresAt });
@@ -686,8 +606,8 @@ const sendOtp = async (req, res) => {
     };
     if (isemailid) data.emailSent = !!emailSent;
     if (!isemailid) data.smsSent = !!smsSent;
-    // Only expose OTP in development mode or if SMS provider is not configured
-    if (isDev || (!isemailid && !smsSent)) data.otp = otpCode;
+    // TEMPORARY: Always expose OTP until MSG91 is fixed
+    data.otp = otpCode;
 
     res.json({
       success: true,
