@@ -19,7 +19,14 @@ const {
   getProfileByAccountId,
   viewProfileDetails,
   searchProfiles,
+  saveDraft,
+  updateProfileVisibility,
+  deleteProfile,
 } = require('./user.controller');
+const {
+  getPartnerPreferences,
+  savePartnerPreferences,
+} = require('./partnerPreference.controller');
 const photoRoutes = require('./photo.routes');
 const { authenticate } = require('../../middleware/auth.middleware');
 const { validate } = require('../../middleware/validation.middleware');
@@ -39,6 +46,19 @@ router.get('/matches', getMatches);
 router.get('/profile/complete', getProfileComplete);
 // Save wizard section (step1, step2, step3, step4)
 router.post('/profile/sections/:section', saveProfileSection);
+// Save draft profile (partial data, keeps status as draft)
+router.post('/profile/draft', saveDraft);
+// Update profile visibility (public/members/hidden)
+router.put('/profile/visibility', [
+  body('visibility')
+    .isIn(['public', 'members', 'hidden'])
+    .withMessage('Visibility must be "public", "members", or "hidden"'),
+  validate,
+], updateProfileVisibility);
+
+// Partner preferences
+router.get('/partner-preferences', getPartnerPreferences);
+router.post('/partner-preferences', savePartnerPreferences);
 
 // Get user profile by accountId (for viewing other users' profiles) - must come before /profile
 router.get('/profile/:accountId', getProfileByAccountId);
@@ -58,6 +78,9 @@ router.get('/profile', getProfile);
 
 // Update user profile
 router.put('/profile', updateProfile);
+
+// Soft delete user profile (GDPR-style)
+router.delete('/profile', deleteProfile);
 
 router.post(
   '/basic-details',

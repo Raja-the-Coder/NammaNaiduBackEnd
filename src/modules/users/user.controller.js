@@ -8,24 +8,81 @@ const PersonPhoto = require('../../models/PersonPhoto.model');
 const HoroscopeDetail = require('../../models/HoroscopeDetail.model');
 const Hobby = require('../../models/Hobby.model');
 const FamilyDetail = require('../../models/FamilyDetail.model');
+const PartnerPreference = require('../../models/PartnerPreference.model');
 
 // ----- Flow: /me, profile completion, registration progress -----
 
-const computeProfileCompletion = (user, basicDetail, horoscopeDetail, familyDetail, hobby) => {
-  let score = 0;
-  const max = 100;
-  if (user && user.name) score += 15;
-  if (user && user.gender) score += 10;
-  if (basicDetail && basicDetail.dateOfBirth) score += 15;
-  if (basicDetail && basicDetail.maritalStatus) score += 10;
-  if (basicDetail && basicDetail.religion) score += 10;
-  if (basicDetail && (basicDetail.country || basicDetail.city)) score += 10;
-  if (basicDetail && basicDetail.education) score += 5;
-  if (basicDetail && basicDetail.occupation) score += 5;
-  if (horoscopeDetail && (horoscopeDetail.rasi || horoscopeDetail.natchathiram)) score += 5;
-  if (familyDetail && familyDetail.fatherName) score += 5;
-  if (hobby && (hobby.hobbies?.length || hobby.languages?.length)) score += 5;
-  return Math.min(score, max);
+/**
+ * Weighted profile completion percentage.
+ *
+ * Section weights (total = 100):
+ *   Basic info       20%  — dateOfBirth, email, password, gender
+ *   Personal/Religious 20%  — height, maritalStatus, religion, caste, dosham, vegetarian (diet)
+ *   Professional     20%  — education, occupation, annualIncome, employmentType
+ *   Location         10%  — country, state, city, pincode
+ *   Family           15%  — familyStatus, familyType, aboutFamily OR FamilyDetail record
+ *   Photos           10%  — at least 1 photo in person_photos
+ *   Horoscope         5%  — HoroscopeDetail record exists
+ */
+const computeProfileCompletion = (user, basicDetail, horoscopeDetail, familyDetail, hobby, personPhoto) => {
+  // Helper: count filled fields and return ratio (0-1)
+  const filledRatio = (obj, fields) => {
+    if (!obj) return 0;
+    const filled = fields.filter((f) => {
+      const v = obj[f];
+      return v !== null && v !== undefined && v !== '';
+    }).length;
+    return filled / fields.length;
+  };
+
+  // Section 1: Basic info (20%) — from user + basicDetail
+  const basicInfoFields = [];
+  let basicInfoFilled = 0;
+  const basicInfoTotal = 4; // dateOfBirth, email, password, gender
+  if (user?.gender) basicInfoFilled++;
+  if (user?.email) basicInfoFilled++;
+  if (user?.password) basicInfoFilled++;
+  if (basicDetail?.dateOfBirth || user?.dateOfBirth) basicInfoFilled++;
+  const basicInfoScore = (basicInfoFilled / basicInfoTotal) * 20;
+
+  // Section 2: Personal/Religious (20%)
+  const personalFields = ['height', 'maritalStatus', 'religion', 'caste', 'dosham', 'vegetarian'];
+  const personalScore = filledRatio(basicDetail, personalFields) * 20;
+
+  // Section 3: Professional (20%)
+  const professionalFields = ['education', 'occupation', 'annualIncome', 'employmentType'];
+  const professionalScore = filledRatio(basicDetail, professionalFields) * 20;
+
+  // Section 4: Location (10%)
+  const locationFields = ['country', 'state', 'city', 'pincode'];
+  const locationScore = filledRatio(basicDetail, locationFields) * 10;
+
+  // Section 5: Family (15%)
+  let familyScore = 0;
+  const familyBasicFields = ['familyStatus', 'familyType', 'aboutFamily'];
+  const familyBasicRatio = filledRatio(basicDetail, familyBasicFields);
+  const hasFamilyDetail = familyDetail && (familyDetail.fatherName || familyDetail.motherName);
+  if (hasFamilyDetail) {
+    familyScore = 15; // full marks if FamilyDetail record filled
+  } else {
+    familyScore = familyBasicRatio * 15;
+  }
+
+  // Section 6: Photos (10%)
+  let photoScore = 0;
+  if (personPhoto) {
+    const hasAtLeastOnePhoto = personPhoto.photo1 || personPhoto.photo2 || personPhoto.photo3 || personPhoto.photo4 || personPhoto.photo5;
+    if (hasAtLeastOnePhoto) photoScore = 10;
+  }
+
+  // Section 7: Horoscope (5%)
+  let horoscopeScore = 0;
+  if (horoscopeDetail && (horoscopeDetail.rasi || horoscopeDetail.natchathiram || horoscopeDetail.birthPlace)) {
+    horoscopeScore = 5;
+  }
+
+  const total = Math.round(basicInfoScore + personalScore + professionalScore + locationScore + familyScore + photoScore + horoscopeScore);
+  return Math.min(total, 100);
 };
 
 const getCompletedRegistrationSteps = async (accountId) => {
@@ -56,6 +113,7 @@ const getMe = async (req, res) => {
         { model: HoroscopeDetail, as: 'horoscopeDetail', required: false },
         { model: FamilyDetail, as: 'familyDetail', required: false },
         { model: Hobby, as: 'hobby', required: false },
+        { model: PersonPhoto, as: 'personPhoto', required: false },
       ],
     });
     if (!user) {
@@ -67,8 +125,14 @@ const getMe = async (req, res) => {
       u.basicDetail,
       u.horoscopeDetail,
       u.familyDetail,
-      u.hobby
+      u.hobby,
+      u.personPhoto
     );
+
+    // Persist completion percentage for query/sort performance
+    if (user.profileCompletionPct !== completion) {
+      await user.update({ profileCompletionPct: completion });
+    }
     const completedSteps = await getCompletedRegistrationSteps(accountId);
     let nextStep = null;
     if (completedSteps.length < 4) {
@@ -90,7 +154,7 @@ const getMe = async (req, res) => {
   }
 };
 
-// GET /api/users/profile/complete - unified profile (user + basicDetail + horoscope + family + hobbies)
+// GET /api/users/profile/complete - unified profile (user + basicDetail + horoscope + family + hobbies + partnerPreference)
 const getProfileComplete = async (req, res) => {
   try {
     const accountId = req.accountId;
@@ -102,6 +166,7 @@ const getProfileComplete = async (req, res) => {
         { model: FamilyDetail, as: 'familyDetail', required: false },
         { model: Hobby, as: 'hobby', required: false },
         { model: PersonPhoto, as: 'personPhoto', required: false },
+        { model: PartnerPreference, as: 'partnerPreference', required: false },
       ],
     });
     if (!user) {
@@ -115,18 +180,42 @@ const getProfileComplete = async (req, res) => {
   }
 };
 
-// GET /api/users/registration-progress - completed steps and next step
+// GET /api/users/registration-progress - completed steps, next step, and completion percentage
 const getRegistrationProgress = async (req, res) => {
   try {
     const accountId = req.accountId;
     const completedSteps = await getCompletedRegistrationSteps(accountId);
     const nextStep = [1, 2, 3, 4].find((s) => !completedSteps.includes(s));
+
+    // Compute completion percentage
+    const user = await User.findOne({
+      where: { accountId },
+      include: [
+        { model: BasicDetail, as: 'basicDetail', required: false },
+        { model: HoroscopeDetail, as: 'horoscopeDetail', required: false },
+        { model: FamilyDetail, as: 'familyDetail', required: false },
+        { model: Hobby, as: 'hobby', required: false },
+        { model: PersonPhoto, as: 'personPhoto', required: false },
+      ],
+    });
+
+    let completionPercentage = 0;
+    if (user) {
+      const u = user.toJSON();
+      completionPercentage = computeProfileCompletion(u, u.basicDetail, u.horoscopeDetail, u.familyDetail, u.hobby, u.personPhoto);
+      // Persist for query/sort
+      if (user.profileCompletionPct !== completionPercentage) {
+        await user.update({ profileCompletionPct: completionPercentage });
+      }
+    }
+
     res.json({
       success: true,
       data: {
         completedSteps,
         nextStep: nextStep ? `step${nextStep}` : null,
         nextStepRoute: nextStep ? `/profile-step-${nextStep}` : null,
+        completionPercentage,
       },
     });
   } catch (error) {
@@ -681,6 +770,11 @@ const saveBasicDetails = async (req, res) => {
       }
     }
 
+    // Mark profile as submitted (registration complete)
+    if (user.profileStatus === 'draft' || !user.profileStatus) {
+      await user.update({ profileStatus: 'submitted' });
+    }
+
     res.json({
       success: true,
       message: 'Basic details saved successfully',
@@ -691,6 +785,7 @@ const saveBasicDetails = async (req, res) => {
           name: user.name,
           email: user.email,
           phone: user.phone,
+          profileStatus: user.profileStatus,
         },
         basicDetail,
       },
@@ -1254,7 +1349,7 @@ const getOppositeGenderProfiles = async (req, res) => {
     console.log('Searching for opposite gender:', oppositeGender);
 
     // Find all users with opposite gender, excluding the current user
-    // First, get users without BasicDetail to avoid association issues
+    // Filter by visibility: exclude 'hidden' profiles; only show 'public' or 'members' (default)
     const oppositeGenderUsers = await User.findAll({
       where: {
         gender: oppositeGender,
@@ -1262,6 +1357,9 @@ const getOppositeGenderProfiles = async (req, res) => {
           [Op.ne]: targetUserId, // Exclude current user
         },
         isActive: true, // Only active users
+        profileVisibility: {
+          [Op.or]: ['public', 'members', null], // Exclude hidden profiles
+        },
       },
       attributes: {
         exclude: ['password'], // Exclude password from response
@@ -1459,7 +1557,10 @@ const searchProfiles = async (req, res) => {
 
     const whereClause = {
       id: { [Op.ne]: userId || 0 },
-      isActive: true
+      isActive: true,
+      profileVisibility: {
+        [Op.or]: ['public', 'members', null], // Exclude hidden profiles
+      },
     };
 
     if (gender) {
@@ -1566,6 +1667,145 @@ const searchProfiles = async (req, res) => {
   }
 };
 
+// POST /api/users/profile/draft - save partial registration data without submitting
+const saveDraft = async (req, res) => {
+  try {
+    const accountId = req.accountId;
+    const body = req.body || {};
+
+    const user = await User.findOne({ where: { accountId } });
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    // Upsert basic_details with whatever fields are provided
+    let [basicDetail] = await BasicDetail.findOrCreate({
+      where: { accountId },
+      defaults: { accountId },
+    });
+
+    const basicFields = [
+      'dateOfBirth', 'height', 'physicalStatus', 'maritalStatus',
+      'religion', 'caste', 'subcaste', 'willingToMarryFromAnyCaste',
+      'dosham', 'vegetarian', 'country', 'state', 'city',
+      'education', 'employmentType', 'occupation', 'currency',
+      'annualIncome', 'familyStatus', 'familyType', 'familyValues',
+      'aboutFamily', 'pincode', 'district',
+    ];
+
+    const basicPayload = {};
+    basicFields.forEach((f) => {
+      if (body[f] !== undefined) basicPayload[f] = body[f];
+    });
+
+    // Handle DOB from parts
+    if (body.dobDay && body.dobMonth && body.dobYear) {
+      basicPayload.dateOfBirth = resolveDateOfBirth({
+        dateOfBirth: body.dateOfBirth,
+        dobDay: body.dobDay,
+        dobMonth: body.dobMonth,
+        dobYear: body.dobYear,
+      });
+    }
+
+    if (Object.keys(basicPayload).length) {
+      await basicDetail.update(basicPayload);
+    }
+
+    // Upsert family details if provided
+    if (body.fatherName || body.motherName || body.siblings) {
+      const [familyDetail] = await FamilyDetail.findOrCreate({
+        where: { accountId },
+        defaults: { accountId },
+      });
+      const famPayload = {};
+      ['fatherName', 'fatherOccupation', 'fatherStatus', 'motherName', 'motherOccupation', 'motherStatus', 'siblings'].forEach((k) => {
+        if (body[k] !== undefined) famPayload[k] = body[k];
+      });
+      if (Object.keys(famPayload).length) await familyDetail.update(famPayload);
+    }
+
+    // Update user-level fields if provided
+    if (body.email && body.email !== user.email) {
+      const dup = await User.findOne({ where: { email: body.email }, attributes: ['accountId'] });
+      if (dup && dup.accountId !== accountId) {
+        return res.status(400).json({ success: false, message: 'Email is already in use' });
+      }
+      user.email = body.email;
+    }
+    if (body.password) user.password = body.password;
+
+    // Keep status as draft (do not advance to submitted)
+    if (user.profileStatus !== 'approved') {
+      user.profileStatus = 'draft';
+    }
+    await user.save();
+
+    res.json({
+      success: true,
+      message: 'Draft saved successfully',
+      data: { profileStatus: user.profileStatus },
+    });
+  } catch (error) {
+    console.error('Error saving draft:', error);
+    res.status(500).json({ success: false, message: error.message || 'Failed to save draft' });
+  }
+};
+
+// PUT /api/users/profile/visibility - update profile visibility
+const updateProfileVisibility = async (req, res) => {
+  try {
+    const accountId = req.accountId;
+    const { visibility } = req.body;
+
+    if (!['public', 'members', 'hidden'].includes(visibility)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid visibility. Must be "public", "members", or "hidden"',
+      });
+    }
+
+    const user = await User.findOne({ where: { accountId } });
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    await user.update({ profileVisibility: visibility });
+
+    res.json({
+      success: true,
+      message: `Profile visibility set to "${visibility}"`,
+      data: { profileVisibility: visibility },
+    });
+  } catch (error) {
+    console.error('Error updating visibility:', error);
+    res.status(500).json({ success: false, message: error.message || 'Failed to update visibility' });
+  }
+};
+
+// DELETE /api/users/profile - soft delete user account (GDPR)
+const deleteProfile = async (req, res) => {
+  try {
+    const accountId = req.accountId;
+
+    const user = await User.findOne({ where: { accountId } });
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    // Sequelize paranoid mode sets deletedAt instead of actually deleting
+    await user.destroy();
+
+    res.json({
+      success: true,
+      message: 'Profile deleted successfully. Your data will be retained for 30 days before permanent deletion.',
+    });
+  } catch (error) {
+    console.error('Error deleting profile:', error);
+    res.status(500).json({ success: false, message: error.message || 'Failed to delete profile' });
+  }
+};
+
 module.exports = {
   getMe,
   getProfileComplete,
@@ -1585,5 +1825,8 @@ module.exports = {
   getProfileByAccountId,
   viewProfileDetails,
   searchProfiles,
+  saveDraft,
+  updateProfileVisibility,
+  deleteProfile,
 };
 

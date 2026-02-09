@@ -110,10 +110,31 @@ const User = sequelize.define(
       type: DataTypes.DATE,
       allowNull: true,
     },
+    profileStatus: {
+      type: DataTypes.ENUM('draft', 'submitted', 'approved', 'rejected'),
+      defaultValue: 'draft',
+      comment: 'Profile status: draft (incomplete), submitted (pending review), approved, rejected',
+    },
+    profileVisibility: {
+      type: DataTypes.ENUM('public', 'members', 'hidden'),
+      defaultValue: 'members',
+      comment: 'Profile visibility: public (everyone), members (logged-in users), hidden (not shown)',
+    },
+    profileCompletionPct: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      defaultValue: 0,
+      comment: 'Cached profile completion percentage (0-100)',
+    },
+    deletedAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
   },
   {
     tableName: 'users',
     timestamps: true,
+    paranoid: true, // Enables soft delete via deletedAt column
     hooks: {
       beforeCreate: async (user) => {
         if (user.password) {

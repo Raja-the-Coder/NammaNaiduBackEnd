@@ -16,6 +16,7 @@ require('./models/DeviceToken.model');
 require('./models/Conversation.model');
 require('./models/Message.model');
 require('./models/RefreshToken.model');
+require('./models/PartnerPreference.model');
 
 const app = require('./app');
 const { connectDB } = require('./config/database');
