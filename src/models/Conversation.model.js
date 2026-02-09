@@ -44,5 +44,6 @@ Conversation.belongsTo(User, { foreignKey: 'user2Id', targetKey: 'accountId', as
 
 const Message = require('./Message.model');
 Conversation.hasMany(Message, { foreignKey: 'conversationId', as: 'messages' });
+Message.belongsTo(Conversation, { foreignKey: 'conversationId', as: 'conversation' });
 
 module.exports = Conversation;

@@ -42,8 +42,7 @@ const Message = sequelize.define(
   }
 );
 
-const Conversation = require('./Conversation.model');
-Message.belongsTo(Conversation, { foreignKey: 'conversationId', as: 'conversation' });
+// Note: Message.belongsTo(Conversation) is set up in Conversation.model.js to avoid circular dependency
 Message.belongsTo(User, { foreignKey: 'senderId', targetKey: 'accountId', as: 'sender' });
 
 module.exports = Message;
