@@ -39,27 +39,44 @@ const SENSITIVE_FIELDS = [
 ];
 
 /**
- * Sanitize sensitive data from object
+ * Sanitize sensitive data from object (with circular reference protection)
  */
-const sanitizeData = (data) => {
+const sanitizeData = (data, depth = 0, seen = new WeakSet()) => {
+  // Prevent infinite recursion from circular references or deeply nested objects
+  if (depth > 10) {
+    return '[TRUNCATED]';
+  }
+
   if (!data || typeof data !== 'object') {
     return data;
   }
 
+  // Detect circular references
+  if (seen.has(data)) {
+    return '[CIRCULAR]';
+  }
+  seen.add(data);
+
   if (Array.isArray(data)) {
-    return data.map(item => sanitizeData(item));
+    return data.slice(0, 50).map(item => sanitizeData(item, depth + 1, seen));
   }
 
-  const sanitized = { ...data };
-  
-  for (const key in sanitized) {
+  // Convert Sequelize model instances to plain objects
+  const plain = typeof data.toJSON === 'function' ? data.toJSON() : { ...data };
+
+  const sanitized = {};
+  for (const key in plain) {
+    if (!Object.prototype.hasOwnProperty.call(plain, key)) continue;
+
     const lowerKey = key.toLowerCase();
     
     // Check if key contains sensitive field
     if (SENSITIVE_FIELDS.some(field => lowerKey.includes(field.toLowerCase()))) {
       sanitized[key] = '***REDACTED***';
-    } else if (typeof sanitized[key] === 'object' && sanitized[key] !== null) {
-      sanitized[key] = sanitizeData(sanitized[key]);
+    } else if (typeof plain[key] === 'object' && plain[key] !== null) {
+      sanitized[key] = sanitizeData(plain[key], depth + 1, seen);
+    } else {
+      sanitized[key] = plain[key];
     }
   }
   

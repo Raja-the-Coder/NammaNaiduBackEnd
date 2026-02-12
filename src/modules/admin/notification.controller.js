@@ -183,15 +183,22 @@ const sendPushNotification = async (req, res) => {
       // Non-blocking, continue response
     }
 
+    // Build a helpful response message
+    let responseMessage = `Push notification sent to ${result.sentCount} users`;
+    if (result.sentCount === 0) {
+      responseMessage = `In-app notification saved for ${targetUsers.length} users, but push notification could not be delivered (no valid FCM tokens found — users need to log in from the mobile app or allow browser notifications on web)`;
+    }
+
     res.json({
       success: true,
-      message: `Push notification sent to ${result.sentCount} users`,
+      message: responseMessage,
       data: {
         target,
         totalUsers: targetUsers.length,
         deviceTokensFound: deviceTokensCount,
         sentCount: result.sentCount,
         failedCount: result.failedCount || 0,
+        inAppNotificationsSaved: targetUsers.length,
       },
     });
   } catch (error) {
@@ -227,7 +234,10 @@ const getNotificationStats = async (req, res) => {
       where: {
         isActive: true,
         fcmToken: {
-          [Op.notLike]: '%fcm_token_placeholder%',
+          [Op.and]: [
+            { [Op.notLike]: '%fcm_token_placeholder%' },
+            { [Op.notLike]: '%web_fcm_token%' },
+          ],
         },
       },
     });
