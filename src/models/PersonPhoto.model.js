@@ -49,6 +49,25 @@ const PersonPhoto = sequelize.define(
       allowNull: true,
       comment: 'Cloudinary URL for proof image',
     },
+    primaryPhoto: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 1,
+      validate: { min: 1, max: 5 },
+      comment: 'Which photo slot (1-5) is the primary/display photo',
+    },
+    photoOrder: {
+      type: DataTypes.STRING,
+      allowNull: false,
+      defaultValue: '1,2,3,4,5',
+      comment: 'Comma-separated display order of photos e.g. 3,1,2,4,5',
+    },
+    faceVerified: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+      comment: 'Whether admin has verified the face matches proof image',
+    },
   },
   {
     tableName: 'person_photos',

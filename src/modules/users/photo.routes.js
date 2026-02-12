@@ -3,6 +3,9 @@ const { body } = require('express-validator');
 const {
   uploadPersonPhotos,
   getPersonPhotos,
+  setPrimaryPhoto,
+  reorderPhotos,
+  deletePhoto,
 } = require('./photo.controller');
 const { authenticate } = require('../../middleware/auth.middleware');
 const { validate } = require('../../middleware/validation.middleware');
@@ -41,6 +44,33 @@ router.post(
   ],
   uploadPersonPhotos
 );
+
+// Set primary photo
+router.put(
+  '/photos/set-primary',
+  [
+    body('photoplacement')
+      .isInt({ min: 1, max: 5 })
+      .withMessage('photoplacement must be between 1 and 5'),
+    validate,
+  ],
+  setPrimaryPhoto
+);
+
+// Reorder photos
+router.put(
+  '/photos/reorder',
+  [
+    body('order')
+      .isArray({ min: 5, max: 5 })
+      .withMessage('order must be an array of exactly 5 numbers'),
+    validate,
+  ],
+  reorderPhotos
+);
+
+// Delete a single photo
+router.delete('/photos/:photoplacement', deletePhoto);
 
 // Get person photos
 router.get('/photos/:personId', getPersonPhotos);

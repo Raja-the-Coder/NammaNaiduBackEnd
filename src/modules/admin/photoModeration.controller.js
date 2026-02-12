@@ -80,6 +80,7 @@ const getAllPhotosForModeration = async (req, res) => {
           status: status,
           profileverified: profileverified,
           proofverified: proofverified,
+          faceVerified: personPhoto.faceVerified || false,
           aiDetection: {
             nudity: false,
             blur: false,
@@ -256,8 +257,39 @@ const rejectPhoto = async (req, res) => {
   }
 };
 
+/**
+ * Verify face (admin marks face as matching proof image)
+ * POST /api/admin/photo-moderation/:id/verify-face
+ */
+const verifyFace = async (req, res) => {
+  try {
+    const { id } = req.params; // personPhotoId (plain integer)
+    const { verified } = req.body; // boolean — true to verify, false to unverify
+
+    const personPhoto = await PersonPhoto.findByPk(id);
+
+    if (!personPhoto) {
+      return errorResponse(res, 'Photo record not found', 404);
+    }
+
+    const newValue = verified !== undefined ? !!verified : true;
+    await personPhoto.update({ faceVerified: newValue });
+
+    return successResponse(res, {
+      message: newValue
+        ? 'Face verified successfully'
+        : 'Face verification removed',
+      faceVerified: newValue,
+    });
+  } catch (error) {
+    console.error('Error in verifyFace:', error);
+    return errorResponse(res, `Failed to verify face: ${error.message}`, 500);
+  }
+};
+
 module.exports = {
   getAllPhotosForModeration,
   approvePhoto,
   rejectPhoto,
+  verifyFace,
 };

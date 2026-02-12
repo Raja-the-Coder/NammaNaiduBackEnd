@@ -6,9 +6,11 @@ const { Readable } = require('stream');
  * @param {string} base64String - Base64 encoded image string (with or without data URI prefix)
  * @param {string} folder - Cloudinary folder path
  * @param {string} publicId - Optional public ID for the image
+ * @param {object} options - Additional options
+ * @param {boolean} options.watermark - Whether to apply "nammanaidu" watermark at bottom (default: false)
  * @returns {Promise<{url: string, publicId: string}>}
  */
-const uploadBase64Image = async (base64String, folder = 'person-photos', publicId = null) => {
+const uploadBase64Image = async (base64String, folder = 'person-photos', publicId = null, options = {}) => {
   try {
     // Remove data URI prefix if present (e.g., "data:image/jpeg;base64,")
     const base64Data = base64String.replace(/^data:image\/\w+;base64,/, '');
@@ -28,6 +30,24 @@ const uploadBase64Image = async (base64String, folder = 'person-photos', publicI
     
     if (publicId) {
       uploadOptions.public_id = publicId;
+    }
+
+    // Apply watermark transformation if requested
+    if (options.watermark) {
+      uploadOptions.transformation = [
+        {
+          overlay: {
+            font_family: 'Arial',
+            font_size: 28,
+            font_weight: 'bold',
+            text: 'nammanaidu',
+          },
+          gravity: 'south',
+          y: 15,
+          color: '#FFFFFF',
+          opacity: 70,
+        },
+      ];
     }
     
     return new Promise((resolve, reject) => {
@@ -83,8 +103,32 @@ const uploadMultipleBase64Images = async (images) => {
   }
 };
 
+/**
+ * Extract Cloudinary public_id from a secure URL
+ * e.g. "https://res.cloudinary.com/xxx/image/upload/v123/nammanaidu/users/abc/photos/photo1-abc.jpg"
+ * => "nammanaidu/users/abc/photos/photo1-abc"
+ * @param {string} url - Cloudinary secure URL
+ * @returns {string|null} publicId or null if not parsable
+ */
+const extractPublicId = (url) => {
+  if (!url) return null;
+  try {
+    // Match everything after /upload/v{digits}/ and strip the file extension
+    const match = url.match(/\/upload\/v\d+\/(.+?)(?:\.\w+)?$/);
+    if (match && match[1]) {
+      return match[1];
+    }
+    // Fallback: match after /upload/ without version
+    const fallback = url.match(/\/upload\/(.+?)(?:\.\w+)?$/);
+    return fallback ? fallback[1] : null;
+  } catch {
+    return null;
+  }
+};
+
 module.exports = {
   uploadBase64Image,
   deleteImage,
   uploadMultipleBase64Images,
+  extractPublicId,
 };

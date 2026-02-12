@@ -3,6 +3,7 @@ const {
   getAllPhotosForModeration,
   approvePhoto,
   rejectPhoto,
+  verifyFace,
 } = require('./photoModeration.controller');
 const { authenticateAdmin } = require('../../middleware/adminAuth.middleware');
 
@@ -19,5 +20,8 @@ router.post('/photo-moderation/:id/approve', approvePhoto);
 
 // Reject a photo
 router.post('/photo-moderation/:id/reject', rejectPhoto);
+
+// Verify face (admin confirms face matches proof image)
+router.post('/photo-moderation/:id/verify-face', verifyFace);
 
 module.exports = router;
