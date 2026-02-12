@@ -146,21 +146,14 @@ const User = sequelize.define(
           user.accountId = uuidv4();
         }
 
-        // Always ensure userCode is set
-        if (!user.userCode || user.userCode.trim() === '') {
-          try {
-            const nextCode = await generateUserCode();
-            user.userCode = nextCode || 'NN#00001';
-          } catch (error) {
-            console.error('Error generating userCode:', error);
-            // Fallback to default if generation fails
-            user.userCode = 'NN#00001';
-          }
-        }
-
-        // Final safety check - ensure userCode is never null or empty
-        if (!user.userCode || user.userCode.trim() === '') {
-          user.userCode = 'NN#00001';
+        // Always generate a unique userCode for every new user
+        try {
+          const nextCode = await generateUserCode();
+          user.userCode = nextCode || `NN#${String(Date.now()).slice(-5)}`;
+        } catch (error) {
+          console.error('Error generating userCode:', error);
+          // Fallback to timestamp-based code to avoid unique constraint conflicts
+          user.userCode = `NN#${String(Date.now()).slice(-5)}`;
         }
       },
       beforeUpdate: async (user) => {
