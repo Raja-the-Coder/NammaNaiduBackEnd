@@ -982,8 +982,43 @@ const createProfileAction = async (req, res) => {
       }
     }
 
+    // ── State machine: clean up contradictory actions ──
+    if (actionType === 'interest') {
+      // Withdraw any previous reject toward this user
+      await ProfileAction.destroy({
+        where: { userId, targetUserId, actionType: 'reject' },
+      });
+    }
+
+    if (actionType === 'reject') {
+      // Remove interest/accept from me toward them
+      await ProfileAction.destroy({
+        where: { userId, targetUserId, actionType: { [Op.in]: ['interest', 'accept'] } },
+      });
+      // If a Match exists, unmatch it
+      const Match = require('../../models/Match.model');
+      await Match.update(
+        { status: 'unmatched', unmatchedBy: userId, unmatchedAt: new Date() },
+        {
+          where: {
+            [Op.or]: [
+              { user1AccountId: userId, user2AccountId: targetUserId },
+              { user1AccountId: targetUserId, user2AccountId: userId },
+            ],
+            status: 'active',
+          },
+        }
+      );
+    }
+
+    if (actionType === 'accept') {
+      // Remove any previous reject toward this user
+      await ProfileAction.destroy({
+        where: { userId, targetUserId, actionType: 'reject' },
+      });
+    }
+
     // Find or create the action
-    // If action already exists, update it; otherwise create new
     const [profileAction, created] = await ProfileAction.findOrCreate({
       where: {
         userId,
@@ -997,10 +1032,13 @@ const createProfileAction = async (req, res) => {
       },
     });
 
-    // If action already existed, update it (though in this case it's the same)
+    // If action already existed, return idempotent response
     if (!created) {
-      await profileAction.update({
-        actionType,
+      return res.json({
+        success: true,
+        message: `You have already sent ${actionType} to this profile`,
+        data: profileAction,
+        duplicate: true,
       });
     }
 
