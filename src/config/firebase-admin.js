@@ -175,12 +175,18 @@ const sendNotification = async (fcmToken, notification, data = {}) => {
   try {
     const messaging = getMessaging();
 
+    const notificationPayload = {
+      title: notification.title,
+      body: notification.body,
+    };
+    // Add image if provided (shows big picture in push notification)
+    if (notification.image) {
+      notificationPayload.image = notification.image;
+    }
+
     const message = {
       token: fcmToken,
-      notification: {
-        title: notification.title,
-        body: notification.body,
-      },
+      notification: notificationPayload,
       data: {
         ...data,
         // Convert all data values to strings (FCM requirement)
@@ -194,6 +200,7 @@ const sendNotification = async (fcmToken, notification, data = {}) => {
         notification: {
           sound: 'default',
           channelId: 'high_importance_channel',
+          ...(notification.image ? { imageUrl: notification.image } : {}),
         },
       },
       apns: {
@@ -201,7 +208,11 @@ const sendNotification = async (fcmToken, notification, data = {}) => {
           aps: {
             sound: 'default',
             badge: 1,
+            'mutable-content': 1, // Required for iOS image notifications
           },
+        },
+        fcmOptions: {
+          ...(notification.image ? { image: notification.image } : {}),
         },
       },
     };
@@ -225,11 +236,16 @@ const sendMulticastNotification = async (fcmTokens, notification, data = {}) => 
   try {
     const messaging = getMessaging();
 
+    const notificationPayload = {
+      title: notification.title,
+      body: notification.body,
+    };
+    if (notification.image) {
+      notificationPayload.image = notification.image;
+    }
+
     const message = {
-      notification: {
-        title: notification.title,
-        body: notification.body,
-      },
+      notification: notificationPayload,
       data: {
         ...data,
         // Convert all data values to strings (FCM requirement)
@@ -243,6 +259,7 @@ const sendMulticastNotification = async (fcmTokens, notification, data = {}) => 
         notification: {
           sound: 'default',
           channelId: 'high_importance_channel',
+          ...(notification.image ? { imageUrl: notification.image } : {}),
         },
       },
       apns: {
@@ -250,7 +267,11 @@ const sendMulticastNotification = async (fcmTokens, notification, data = {}) => 
           aps: {
             sound: 'default',
             badge: 1,
+            'mutable-content': 1,
           },
+        },
+        fcmOptions: {
+          ...(notification.image ? { image: notification.image } : {}),
         },
       },
       tokens: fcmTokens,
@@ -302,12 +323,17 @@ const sendTopicNotification = async (topic, notification, data = {}) => {
   try {
     const messaging = getMessaging();
 
+    const notificationPayload = {
+      title: notification.title,
+      body: notification.body,
+    };
+    if (notification.image) {
+      notificationPayload.image = notification.image;
+    }
+
     const message = {
       topic: topic,
-      notification: {
-        title: notification.title,
-        body: notification.body,
-      },
+      notification: notificationPayload,
       data: {
         ...data,
         // Convert all data values to strings (FCM requirement)
@@ -321,6 +347,7 @@ const sendTopicNotification = async (topic, notification, data = {}) => {
         notification: {
           sound: 'default',
           channelId: 'high_importance_channel',
+          ...(notification.image ? { imageUrl: notification.image } : {}),
         },
       },
       apns: {
@@ -328,7 +355,11 @@ const sendTopicNotification = async (topic, notification, data = {}) => {
           aps: {
             sound: 'default',
             badge: 1,
+            'mutable-content': 1,
           },
+        },
+        fcmOptions: {
+          ...(notification.image ? { image: notification.image } : {}),
         },
       },
     };

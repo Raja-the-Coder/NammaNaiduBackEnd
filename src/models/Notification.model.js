@@ -45,6 +45,11 @@ const Notification = sequelize.define('Notification', {
         type: DataTypes.STRING,
         allowNull: true,
         comment: 'Generic field for related IDs (e.g. actionId)'
+    },
+    imageUrl: {
+        type: DataTypes.TEXT,
+        allowNull: true,
+        comment: 'Image URL to display in push notification and in-app',
     }
 }, {
     timestamps: true,

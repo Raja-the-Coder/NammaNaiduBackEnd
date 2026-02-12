@@ -11,7 +11,7 @@ const { Op } = require('sequelize');
  */
 const sendPushNotification = async (req, res) => {
   try {
-    const { title, message, target } = req.body;
+    const { title, message, target, imageUrl } = req.body;
 
     // Validation
     if (!title || !message) {
@@ -139,14 +139,18 @@ const sendPushNotification = async (req, res) => {
       console.log(`⚠️ Could not fetch sample tokens (non-critical): ${sampleError.message}`);
     }
 
-    // Send push notifications
+    // Send push notifications (with optional image)
+    const pushNotification = { title, body: message };
+    if (imageUrl) pushNotification.image = imageUrl;
+
     const result = await sendPushNotificationToUsers(
       accountIds,
-      { title, body: message },
+      pushNotification,
       {
         type: 'admin_notification',
         target: target,
         timestamp: new Date().toISOString(),
+        ...(imageUrl ? { imageUrl } : {}),
       }
     );
 
@@ -169,6 +173,7 @@ const sendPushNotification = async (req, res) => {
         type: 'system',
         title,
         message,
+        imageUrl: imageUrl || null,
         isRead: false,
       }));
 
@@ -274,7 +279,7 @@ const getNotificationStats = async (req, res) => {
  */
 const sendTopicPush = async (req, res) => {
   try {
-    const { title, message, topic } = req.body;
+    const { title, message, topic, imageUrl } = req.body;
 
     if (!title || !message || !topic) {
       return res.status(400).json({
@@ -291,11 +296,15 @@ const sendTopicPush = async (req, res) => {
       });
     }
 
+    const pushNotification = { title, body: message };
+    if (imageUrl) pushNotification.image = imageUrl;
+
     const { sendTopicNotification } = require('../../config/firebase-admin');
-    const result = await sendTopicNotification(topic, { title, body: message }, {
+    const result = await sendTopicNotification(topic, pushNotification, {
       type: 'topic_notification',
       topic,
       timestamp: new Date().toISOString(),
+      ...(imageUrl ? { imageUrl } : {}),
     });
 
     res.json({

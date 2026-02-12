@@ -226,6 +226,14 @@ const connectDB = async () => {
       console.warn('[DB] Notification preferences migration warning (non-fatal):', notifPrefMigrationErr.message);
     }
 
+    // Notification imageUrl column migration (idempotent)
+    try {
+      await sequelize.query(`ALTER TABLE notifications ADD COLUMN IF NOT EXISTS "imageUrl" TEXT;`);
+      console.log('[DB] Notification imageUrl migration applied');
+    } catch (notifImgMigrationErr) {
+      console.warn('[DB] Notification imageUrl migration warning (non-fatal):', notifImgMigrationErr.message);
+    }
+
     // Seed default admin users (idempotent — skips if email already exists)
     try {
       const adminSeeds = [

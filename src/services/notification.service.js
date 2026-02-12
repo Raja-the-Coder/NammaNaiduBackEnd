@@ -132,10 +132,11 @@ const getTimezoneOffsetString = (tz, date) => {
  * @param {string} opts.title       - Notification title
  * @param {string} opts.message     - Notification body
  * @param {string} [opts.relatedId] - Related entity ID
+ * @param {string} [opts.imageUrl]  - Image URL for rich push notification
  * @param {Object} [opts.pushData]  - Extra FCM data payload
  * @returns {Promise<{ sent: boolean, reason?: string }>}
  */
-const sendSmartNotification = async ({ userId, senderId, type, title, message, relatedId, pushData = {} }) => {
+const sendSmartNotification = async ({ userId, senderId, type, title, message, relatedId, imageUrl, pushData = {} }) => {
   try {
     const pref = await getOrCreatePreferences(userId);
 
@@ -161,6 +162,7 @@ const sendSmartNotification = async ({ userId, senderId, type, title, message, r
         title,
         message,
         relatedId: relatedId || null,
+        imageUrl: imageUrl || null,
         isRead: false,
       });
     }
@@ -202,9 +204,13 @@ const sendSmartNotification = async ({ userId, senderId, type, title, message, r
     }
 
     // 7. Send push immediately
-    await sendPushNotificationToUser(userId, { title, body: message }, {
+    const pushNotif = { title, body: message };
+    if (imageUrl) pushNotif.image = imageUrl;
+
+    await sendPushNotificationToUser(userId, pushNotif, {
       type,
       relatedId: relatedId || '',
+      ...(imageUrl ? { imageUrl } : {}),
       ...pushData,
     });
 
