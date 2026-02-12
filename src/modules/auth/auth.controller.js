@@ -29,6 +29,41 @@ const compareOtp = async (plainOtp, hashedOtp) => {
   return bcrypt.compare(plainOtp, hashedOtp);
 };
 
+// Helper: create user or return existing (handles unique constraint + soft-deleted users)
+const findOrCreateUser = async (phone, { name, gender, profileFor, countryCode }) => {
+  // 1. Try normal find (excludes soft-deleted due to paranoid:true)
+  let user = await User.findOne({ where: { phone } });
+  if (user) return { user, isNewUser: false };
+
+  // 2. Try create
+  try {
+    user = await User.create({
+      name: (name && String(name).trim()) || 'User',
+      gender: gender || null,
+      profileFor: profileFor || null,
+      countryCode: countryCode || '+91',
+      phone,
+      otpVerifiedAt: new Date(),
+    });
+    return { user, isNewUser: true };
+  } catch (createErr) {
+    // 3. If unique constraint failed, find again including soft-deleted records
+    if (createErr.name === 'SequelizeUniqueConstraintError' || createErr.message?.includes('Validation error')) {
+      user = await User.findOne({ where: { phone }, paranoid: false });
+      if (user) {
+        // Restore soft-deleted user
+        if (user.deletedAt) {
+          user.deletedAt = null;
+          user.otpVerifiedAt = new Date();
+          await user.save({ paranoid: false });
+        }
+        return { user, isNewUser: false };
+      }
+    }
+    throw createErr;
+  }
+};
+
 // Helper: issue access + refresh token pair and update lastLoginAt
 const issueTokenPair = async (user, deviceInfo = null) => {
   const accessToken = generateToken(user.accountId);
@@ -665,41 +700,22 @@ const verifyOtp = async (req, res) => {
     if (isTestOtpAllowed && otp === DEFAULT_TEST_OTP) {
       console.log('✅ Default test OTP used for verification:', identifier);
       if (isRegistration && phone) {
-        const existingUser = await User.findOne({ where: { phone } });
-        if (existingUser) {
-          let hasBasicDetails = false;
-          try {
-            const basicDetail = await BasicDetail.findOne({ where: { accountId: existingUser.accountId }, attributes: ['id'] });
-            hasBasicDetails = !!basicDetail;
-          } catch (_) {}
-          const { accessToken, refreshToken: rToken } = await issueTokenPair(existingUser, deviceInfo);
-          return apiResponse(res, true, 'OTP verified', {
-            user: { id: existingUser.id, accountId: existingUser.accountId, userCode: existingUser.userCode, name: existingUser.name, phone: existingUser.phone },
-            token: accessToken,
-            refreshToken: rToken,
-            isNewUser: false,
-            hasBasicDetails,
-          });
-        }
-        const displayName = (name && String(name).trim()) || 'User';
-        const user = await User.create({
-          name: displayName,
-          gender: gender || null,
-          profileFor: profileFor || null,
-          countryCode: countryCode || '+91',
-          phone,
-          otpVerifiedAt: new Date(),
-        });
+        const { user, isNewUser } = await findOrCreateUser(phone, { name, gender, profileFor, countryCode });
+        let hasBasicDetails = false;
+        try {
+          const basicDetail = await BasicDetail.findOne({ where: { accountId: user.accountId }, attributes: ['id'] });
+          hasBasicDetails = !!basicDetail;
+        } catch (_) {}
         const { accessToken, refreshToken: rToken } = await issueTokenPair(user, deviceInfo);
-        return res.status(201).json({
+        return res.status(isNewUser ? 201 : 200).json({
           success: true,
-          message: 'OTP verified and account created',
+          message: isNewUser ? 'OTP verified and account created' : 'OTP verified',
           data: {
             user: { id: user.id, accountId: user.accountId, userCode: user.userCode, name: user.name, phone: user.phone },
             token: accessToken,
             refreshToken: rToken,
-            isNewUser: true,
-            hasBasicDetails: false,
+            isNewUser,
+            hasBasicDetails,
           },
           error: null,
         });
@@ -785,6 +801,29 @@ const verifyOtp = async (req, res) => {
 
     // ----- Mobile verification: registration (create user) or login (return token) -----
     if (!isemailid) {
+      if (isRegistration) {
+        const { user, isNewUser } = await findOrCreateUser(phone, { name, gender, profileFor, countryCode });
+        let hasBasicDetails = false;
+        try {
+          const basicDetail = await BasicDetail.findOne({ where: { accountId: user.accountId }, attributes: ['id'] });
+          hasBasicDetails = !!basicDetail;
+        } catch (_) {}
+        try { await otpRecord.destroy(); } catch (_) {}
+        const { accessToken, refreshToken: rToken } = await issueTokenPair(user, deviceInfo);
+        return res.status(isNewUser ? 201 : 200).json({
+          success: true,
+          message: isNewUser ? 'OTP verified and account created' : 'OTP verified',
+          data: {
+            user: { id: user.id, accountId: user.accountId, userCode: user.userCode, name: user.name, phone: user.phone },
+            token: accessToken,
+            refreshToken: rToken,
+            isNewUser,
+            hasBasicDetails,
+          },
+          error: null,
+        });
+      }
+      // Login flow - find existing user
       const existingUser = await User.findOne({ where: { phone } });
       if (existingUser) {
         let hasBasicDetails = false;
@@ -799,31 +838,6 @@ const verifyOtp = async (req, res) => {
           refreshToken: rToken,
           isNewUser: false,
           hasBasicDetails,
-        });
-      }
-      if (isRegistration) {
-        const displayName = (name && String(name).trim()) || 'User';
-        const user = await User.create({
-          name: displayName,
-          gender: gender || null,
-          profileFor: profileFor || null,
-          countryCode: countryCode || '+91',
-          phone,
-          otpVerifiedAt: new Date(),
-        });
-        try { await otpRecord.destroy(); } catch (_) {}
-        const { accessToken, refreshToken: rToken } = await issueTokenPair(user, deviceInfo);
-        return res.status(201).json({
-          success: true,
-          message: 'OTP verified and account created',
-          data: {
-            user: { id: user.id, accountId: user.accountId, userCode: user.userCode, name: user.name, phone: user.phone },
-            token: accessToken,
-            refreshToken: rToken,
-            isNewUser: true,
-            hasBasicDetails: false,
-          },
-          error: null,
         });
       }
       return apiResponse(res, false, 'No account found with this number. Please register first.', null, 'User not found', 404);
