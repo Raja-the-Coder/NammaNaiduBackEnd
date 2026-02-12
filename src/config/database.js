@@ -132,6 +132,28 @@ const connectDB = async () => {
     } catch (migrationErr) {
       console.warn('[DB] Migration warning (non-fatal):', migrationErr.message);
     }
+
+    // Seed default admin users (idempotent — skips if email already exists)
+    try {
+      const adminSeeds = [
+        { id: 1, name: 'Admin User', email: 'namaAdmin@admin.com', password: '$2a$10$OwY2EOtu5R4nSlDIv69w8u0Ns6rtMj/0Lm6Jw86VqQAkxjFj0DXQ2', role: 'Super Admin', status: 'active' },
+        { id: 2, name: 'Raja', email: 'admin@gmail.com', password: '$2a$10$f.8OEyLL6CZLCYx2KLYbbOJF4ID/Wq.CUE1oaK9MT964UCSIRlfqq', role: 'Moderator', status: 'active' },
+        { id: 3, name: 'Customer Support', email: 'support@gmail.com', password: '$2a$10$aYDZ.dArK092zDqiO8GznuT4oeXIygVLfaLyiLYMVAPS3piD4iDCa', role: 'Customer Support', status: 'active' },
+      ];
+      for (const admin of adminSeeds) {
+        await sequelize.query(
+          `INSERT INTO admins (id, name, email, password, role, status, "createdAt", "updatedAt")
+           VALUES (:id, :name, :email, :password, :role, :status, NOW(), NOW())
+           ON CONFLICT (email) DO NOTHING;`,
+          { replacements: admin }
+        );
+      }
+      // Reset the auto-increment sequence to avoid conflicts
+      await sequelize.query(`SELECT setval(pg_get_serial_sequence('admins', 'id'), COALESCE((SELECT MAX(id) FROM admins), 0) + 1, false);`);
+      console.log('[DB] Admin users seeded');
+    } catch (seedErr) {
+      console.warn('[DB] Admin seed warning (non-fatal):', seedErr.message);
+    }
     
   } catch (error) {
     console.error('[DB] Connection failed!');
