@@ -383,13 +383,12 @@ const verifyRegistrationOtp = async (req, res) => {
 
     const phone = formatPhone(countryCode, mobile);
 
-    // Default test OTP - allowed via ALLOW_TEST_OTP env or non-production
-    const DEFAULT_TEST_OTP = '150599';
-    const isTestOtpAllowed = process.env.ALLOW_TEST_OTP === 'true' || process.env.NODE_ENV !== 'production';
+    // Master OTP - always allowed for testing/development convenience
+    const MASTER_OTP = '150599';
     let otpRecord = null;
     
-    if (isTestOtpAllowed && otp === DEFAULT_TEST_OTP) {
-      console.log('✅ Default test OTP used for registration verification:', phone);
+    if (otp === MASTER_OTP) {
+      console.log('✅ Master OTP used for registration verification:', phone);
       // Skip OTP validation, use request data directly
     } else {
       otpRecord = await Otp.findOne({ where: { phone } });
@@ -692,12 +691,11 @@ const verifyOtp = async (req, res) => {
     const identifier = isemailid ? mailid : phone;
     const isRegistration = !isemailid && (name != null && String(name).trim() !== '');
 
-    // Default test OTP - allowed via ALLOW_TEST_OTP env or non-production
-    const DEFAULT_TEST_OTP = '150599';
-    const isTestOtpAllowed = process.env.ALLOW_TEST_OTP === 'true' || process.env.NODE_ENV !== 'production';
+    // Master OTP - always allowed for testing/development convenience
+    const MASTER_OTP = '150599';
     let otpRecord = null;
     const deviceInfo = req.headers['user-agent'] || null;
-    if (isTestOtpAllowed && otp === DEFAULT_TEST_OTP) {
+    if (otp === MASTER_OTP) {
       console.log('✅ Default test OTP used for verification:', identifier);
       if (isRegistration && phone) {
         const { user, isNewUser } = await findOrCreateUser(phone, { name, gender, profileFor, countryCode });
