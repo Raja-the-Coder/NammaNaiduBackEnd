@@ -14,6 +14,7 @@ const {
   getProfileAction,
   getMyProfileActions,
   getReceivedProfileActions,
+  getActivitySummary,
   getOppositeGenderProfiles,
   getProfileByAccountId,
   viewProfileDetails,
@@ -206,6 +207,9 @@ router.get('/my-profile-actions', getMyProfileActions);
 
 // Get all actions received by the current user (with optional filter)
 router.get('/received-profile-actions', getReceivedProfileActions);
+
+// Get activity summary (viewed, interests, shortlisted counts)
+router.get('/activity-summary', getActivitySummary);
 
 // Get opposite gender profiles (uses authenticated user's ID or provided ID as query parameter)
 router.get('/opposite-gender-profiles', getOppositeGenderProfiles);

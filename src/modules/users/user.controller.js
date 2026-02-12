@@ -1940,6 +1940,44 @@ const deleteProfile = async (req, res) => {
   }
 };
 
+// GET /api/users/activity-summary — dashboard activity counts
+const getActivitySummary = async (req, res) => {
+  try {
+    const currentUserId = req.accountId; // UUID of the logged-in user
+
+    // Run all three count queries in parallel for performance
+    const [viewedCount, interestCount, shortlistedCount] = await Promise.all([
+      // Count of people who viewed my profile
+      ProfileView.count({
+        where: { viewedUserId: currentUserId },
+      }),
+      // Count of interest actions received
+      ProfileAction.count({
+        where: { targetUserId: currentUserId, actionType: 'interest' },
+      }),
+      // Count of shortlist actions received
+      ProfileAction.count({
+        where: { targetUserId: currentUserId, actionType: 'shortlist' },
+      }),
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        viewedYou: viewedCount,
+        interests: interestCount,
+        shortlisted: shortlistedCount,
+      },
+    });
+  } catch (error) {
+    console.error('Error getting activity summary:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to get activity summary',
+    });
+  }
+};
+
 module.exports = {
   getMe,
   getProfileComplete,
@@ -1962,5 +2000,6 @@ module.exports = {
   saveDraft,
   updateProfileVisibility,
   deleteProfile,
+  getActivitySummary,
 };
 
