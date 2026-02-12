@@ -151,6 +151,81 @@ const connectDB = async () => {
       console.warn('[DB] houseName migration warning (non-fatal):', houseNameMigrationErr.message);
     }
 
+    // Notification preferences & queue tables migration (idempotent)
+    try {
+      // Create batchMode enum if it doesn't exist
+      await sequelize.query(`
+        DO $$ BEGIN
+          IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'enum_notification_preferences_batchMode') THEN
+            CREATE TYPE "enum_notification_preferences_batchMode" AS ENUM ('instant', 'hourly', 'daily');
+          END IF;
+        END$$;
+      `);
+
+      // Create notification_preferences table
+      await sequelize.query(`
+        CREATE TABLE IF NOT EXISTS notification_preferences (
+          id SERIAL PRIMARY KEY,
+          "accountId" UUID NOT NULL UNIQUE REFERENCES users("accountId"),
+          "interestEnabled" BOOLEAN DEFAULT true,
+          "profileViewEnabled" BOOLEAN DEFAULT true,
+          "shortlistEnabled" BOOLEAN DEFAULT true,
+          "chatEnabled" BOOLEAN DEFAULT true,
+          "systemEnabled" BOOLEAN DEFAULT true,
+          "matchEnabled" BOOLEAN DEFAULT true,
+          "pushEnabled" BOOLEAN DEFAULT true,
+          "inAppEnabled" BOOLEAN DEFAULT true,
+          "emailEnabled" BOOLEAN DEFAULT false,
+          "quietHoursEnabled" BOOLEAN DEFAULT false,
+          "quietHoursStart" VARCHAR(5) DEFAULT '22:00',
+          "quietHoursEnd" VARCHAR(5) DEFAULT '07:00',
+          timezone VARCHAR(50) DEFAULT 'Asia/Kolkata',
+          "mutedUserIds" JSONB DEFAULT '[]',
+          "batchMode" "enum_notification_preferences_batchMode" DEFAULT 'instant',
+          "topicSubscriptions" JSONB DEFAULT '["announcements"]',
+          "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+      `);
+
+      // Create notification_queue reason enum
+      await sequelize.query(`
+        DO $$ BEGIN
+          IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'enum_notification_queue_reason') THEN
+            CREATE TYPE "enum_notification_queue_reason" AS ENUM ('quiet_hours', 'batching');
+          END IF;
+        END$$;
+      `);
+
+      // Create notification_queue table
+      await sequelize.query(`
+        CREATE TABLE IF NOT EXISTS notification_queue (
+          id BIGSERIAL PRIMARY KEY,
+          "accountId" UUID NOT NULL,
+          type VARCHAR(255) NOT NULL,
+          title VARCHAR(255) NOT NULL,
+          message TEXT NOT NULL,
+          data JSONB DEFAULT '{}',
+          reason "enum_notification_queue_reason" NOT NULL,
+          "scheduledFor" TIMESTAMPTZ,
+          sent BOOLEAN DEFAULT false,
+          "sentAt" TIMESTAMPTZ,
+          "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+      `);
+
+      // Create indexes
+      await sequelize.query(`CREATE INDEX IF NOT EXISTS idx_notif_pref_account ON notification_preferences ("accountId");`);
+      await sequelize.query(`CREATE INDEX IF NOT EXISTS idx_notif_queue_account ON notification_queue ("accountId");`);
+      await sequelize.query(`CREATE INDEX IF NOT EXISTS idx_notif_queue_sent_scheduled ON notification_queue (sent, "scheduledFor");`);
+      await sequelize.query(`CREATE INDEX IF NOT EXISTS idx_notif_queue_reason ON notification_queue (reason);`);
+
+      console.log('[DB] Notification preferences & queue migration applied');
+    } catch (notifPrefMigrationErr) {
+      console.warn('[DB] Notification preferences migration warning (non-fatal):', notifPrefMigrationErr.message);
+    }
+
     // Seed default admin users (idempotent — skips if email already exists)
     try {
       const adminSeeds = [

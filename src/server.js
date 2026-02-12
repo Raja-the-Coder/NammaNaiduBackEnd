@@ -13,6 +13,8 @@ require('./models/ProfileView.model');
 require('./models/PersonPhoto.model');
 require('./models/Notification.model');
 require('./models/DeviceToken.model');
+require('./models/NotificationPreference.model');
+require('./models/NotificationQueue.model');
 require('./models/Conversation.model');
 require('./models/Message.model');
 require('./models/RefreshToken.model');
@@ -77,8 +79,35 @@ const startServer = async () => {
       }, { timezone: 'UTC' });
 
       console.log('✅ Daily recommendations cron job scheduled (2:00 AM IST)');
+
+      // ── Notification Queue Flush (every 15 minutes) ──
+      const { flushNotificationQueue, cleanupNotificationQueue } = require('./services/notification.service');
+
+      cron.schedule('*/15 * * * *', async () => {
+        try {
+          const result = await flushNotificationQueue();
+          if (result.flushed > 0) {
+            console.log('[Cron] Notification queue flush:', result);
+          }
+        } catch (err) {
+          console.error('[Cron] Notification queue flush failed:', err.message);
+        }
+      });
+      console.log('✅ Notification queue flush cron scheduled (every 15 min)');
+
+      // ── Notification Queue Cleanup (daily at 3:00 AM IST = 21:30 UTC) ──
+      cron.schedule('30 21 * * *', async () => {
+        try {
+          const result = await cleanupNotificationQueue();
+          console.log('[Cron] Notification queue cleanup:', result);
+        } catch (err) {
+          console.error('[Cron] Notification queue cleanup failed:', err.message);
+        }
+      }, { timezone: 'UTC' });
+      console.log('✅ Notification queue cleanup cron scheduled (3:00 AM IST)');
+
     } catch (cronErr) {
-      console.warn('⚠️  node-cron not available, daily recommendations cron disabled:', cronErr.message);
+      console.warn('⚠️  node-cron not available, cron jobs disabled:', cronErr.message);
       console.log('   Install with: npm install node-cron');
     }
   });

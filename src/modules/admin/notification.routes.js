@@ -6,8 +6,13 @@ const { authenticateAdmin } = require('../../middleware/adminAuth.middleware');
 // Get notification statistics (Admin only)
 router.get('/stats', authenticateAdmin, notificationController.getNotificationStats);
 
-// Send push notification (Admin only)
+// Get notification queue statistics (Admin only)
+router.get('/queue-stats', authenticateAdmin, notificationController.getQueueStats);
+
+// Send push notification to target audience (Admin only)
 router.post('/send-push', authenticateAdmin, notificationController.sendPushNotification);
 
-module.exports = router;
+// Send push notification to an FCM topic (Admin only)
+router.post('/send-topic', authenticateAdmin, notificationController.sendTopicPush);
 
+module.exports = router;

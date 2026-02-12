@@ -268,7 +268,87 @@ const getNotificationStats = async (req, res) => {
   }
 };
 
+/**
+ * Send push notification to an FCM topic
+ * POST /api/admin/notifications/send-topic
+ */
+const sendTopicPush = async (req, res) => {
+  try {
+    const { title, message, topic } = req.body;
+
+    if (!title || !message || !topic) {
+      return res.status(400).json({
+        success: false,
+        message: 'title, message, and topic are required',
+      });
+    }
+
+    const allowedTopics = ['announcements', 'new_profiles', 'promotions', 'tips', 'events'];
+    if (!allowedTopics.includes(topic)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid topic. Allowed: ${allowedTopics.join(', ')}`,
+      });
+    }
+
+    const { sendTopicNotification } = require('../../config/firebase-admin');
+    const result = await sendTopicNotification(topic, { title, body: message }, {
+      type: 'topic_notification',
+      topic,
+      timestamp: new Date().toISOString(),
+    });
+
+    res.json({
+      success: true,
+      message: `Topic notification sent to '${topic}'`,
+      data: { messageId: result },
+    });
+  } catch (error) {
+    console.error('Error sending topic notification:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to send topic notification',
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * GET /api/admin/notifications/queue-stats
+ * Get notification queue statistics
+ */
+const getQueueStats = async (req, res) => {
+  try {
+    const NotificationQueue = require('../../models/NotificationQueue.model');
+
+    const pending = await NotificationQueue.count({ where: { sent: false } });
+    const pendingQuietHours = await NotificationQueue.count({ where: { sent: false, reason: 'quiet_hours' } });
+    const pendingBatching = await NotificationQueue.count({ where: { sent: false, reason: 'batching' } });
+    const sentToday = await NotificationQueue.count({
+      where: {
+        sent: true,
+        sentAt: { [Op.gte]: new Date(new Date().setHours(0, 0, 0, 0)) },
+      },
+    });
+
+    res.json({
+      success: true,
+      data: {
+        pending,
+        pendingQuietHours,
+        pendingBatching,
+        sentToday,
+      },
+    });
+  } catch (error) {
+    console.error('Error getting queue stats:', error);
+    res.status(500).json({ success: false, message: 'Failed to get queue stats', error: error.message });
+  }
+};
+
 module.exports = {
   sendPushNotification,
   getNotificationStats,
+  sendTopicPush,
+  getQueueStats,
 };
