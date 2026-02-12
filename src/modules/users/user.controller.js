@@ -1139,7 +1139,7 @@ const createProfileAction = async (req, res) => {
 
     res.json({
       success: true,
-      message: `Profile ${actionType} ${created ? 'created' : 'updated'} successfully`,
+      message: `Profile ${actionType} created successfully`,
       data: profileAction,
       match: matchCreated ? { id: matchCreated.id, score: matchCreated.matchScore, type: matchCreated.matchType } : null,
       dailyLimitInfo: { used: limitCheck.used + 1, limit: limitCheck.limit },

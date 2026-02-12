@@ -107,6 +107,31 @@ const connectDB = async () => {
     // Sync models - creates tables that don't exist (safe for production)
     await sequelize.sync({ alter: false });
     console.log('[DB] Models synchronized');
+
+    // Run profile enhancements migration (idempotent — safe to re-run)
+    try {
+      await sequelize.query(`
+        DO $$
+        BEGIN
+          IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'enum_users_profileStatus') THEN
+            CREATE TYPE "enum_users_profileStatus" AS ENUM ('draft', 'submitted', 'approved', 'rejected');
+          END IF;
+          IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'enum_users_profileVisibility') THEN
+            CREATE TYPE "enum_users_profileVisibility" AS ENUM ('public', 'members', 'hidden');
+          END IF;
+        END$$;
+      `);
+      await sequelize.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS "profileStatus" "enum_users_profileStatus" DEFAULT 'draft';`);
+      await sequelize.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS "profileVisibility" "enum_users_profileVisibility" DEFAULT 'members';`);
+      await sequelize.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS "profileCompletionPct" INTEGER DEFAULT 0;`);
+      await sequelize.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS "deletedAt" TIMESTAMPTZ;`);
+      await sequelize.query(`CREATE INDEX IF NOT EXISTS idx_users_deleted_at ON users ("deletedAt");`);
+      await sequelize.query(`CREATE INDEX IF NOT EXISTS idx_users_profile_status ON users ("profileStatus");`);
+      await sequelize.query(`CREATE INDEX IF NOT EXISTS idx_users_profile_visibility ON users ("profileVisibility");`);
+      console.log('[DB] Profile enhancements migration applied');
+    } catch (migrationErr) {
+      console.warn('[DB] Migration warning (non-fatal):', migrationErr.message);
+    }
     
   } catch (error) {
     console.error('[DB] Connection failed!');
