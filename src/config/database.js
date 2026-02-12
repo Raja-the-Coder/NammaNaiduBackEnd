@@ -133,6 +133,16 @@ const connectDB = async () => {
       console.warn('[DB] Migration warning (non-fatal):', migrationErr.message);
     }
 
+    // Photo system enhancements migration (idempotent)
+    try {
+      await sequelize.query(`ALTER TABLE person_photos ADD COLUMN IF NOT EXISTS "primaryPhoto" INTEGER NOT NULL DEFAULT 1;`);
+      await sequelize.query(`ALTER TABLE person_photos ADD COLUMN IF NOT EXISTS "photoOrder" VARCHAR(255) NOT NULL DEFAULT '1,2,3,4,5';`);
+      await sequelize.query(`ALTER TABLE person_photos ADD COLUMN IF NOT EXISTS "faceVerified" BOOLEAN NOT NULL DEFAULT false;`);
+      console.log('[DB] Photo system migration applied');
+    } catch (photoMigrationErr) {
+      console.warn('[DB] Photo migration warning (non-fatal):', photoMigrationErr.message);
+    }
+
     // Seed default admin users (idempotent — skips if email already exists)
     try {
       const adminSeeds = [
