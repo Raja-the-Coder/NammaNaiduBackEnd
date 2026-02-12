@@ -116,6 +116,11 @@ const BasicDetail = sequelize.define(
       type: DataTypes.STRING,
       allowNull: true,
     },
+    houseName: {
+      type: DataTypes.STRING,
+      allowNull: true,
+      comment: 'House name or building name',
+    },
     profileverified: {
       type: DataTypes.INTEGER,
       allowNull: true,

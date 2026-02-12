@@ -622,6 +622,7 @@ const saveBasicDetails = async (req, res) => {
       aboutFamily,
       pincode,
       district,
+      houseName,
     } = req.body;
 
     const user = await User.findOne({ where: { accountId } });
@@ -673,6 +674,7 @@ const saveBasicDetails = async (req, res) => {
       familyType,
       familyValues,
       aboutFamily,
+      houseName,
     };
 
     // Try to find or create basic detail record

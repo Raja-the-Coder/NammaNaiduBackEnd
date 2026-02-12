@@ -143,6 +143,14 @@ const connectDB = async () => {
       console.warn('[DB] Photo migration warning (non-fatal):', photoMigrationErr.message);
     }
 
+    // Basic details houseName migration (idempotent)
+    try {
+      await sequelize.query(`ALTER TABLE basic_details ADD COLUMN IF NOT EXISTS "houseName" VARCHAR(255);`);
+      console.log('[DB] houseName migration applied');
+    } catch (houseNameMigrationErr) {
+      console.warn('[DB] houseName migration warning (non-fatal):', houseNameMigrationErr.message);
+    }
+
     // Seed default admin users (idempotent — skips if email already exists)
     try {
       const adminSeeds = [

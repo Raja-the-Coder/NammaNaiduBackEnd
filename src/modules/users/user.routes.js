@@ -156,6 +156,7 @@ router.post(
     body('familyType').optional().trim(),
     body('familyValues').optional().trim(),
     body('aboutFamily').optional().trim(),
+    body('houseName').optional().trim(),
     validate,
   ],
   saveBasicDetails
