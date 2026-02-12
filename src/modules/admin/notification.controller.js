@@ -355,9 +355,76 @@ const getQueueStats = async (req, res) => {
   }
 };
 
+/**
+ * GET /api/admin/notifications/history
+ * Get sent notification history (system/admin notifications)
+ * Query params: page (default 1), limit (default 20)
+ */
+const getNotificationHistory = async (req, res) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
+    const offset = (page - 1) * limit;
+
+    const { count, rows } = await Notification.findAndCountAll({
+      where: { type: 'system', senderId: null },
+      order: [['createdAt', 'DESC']],
+      limit,
+      offset,
+      attributes: ['id', 'title', 'message', 'imageUrl', 'createdAt'],
+    });
+
+    // De-duplicate: admin bulk-sends create one row per user with same title+message+time.
+    // Group by title+message+createdAt (rounded to second) to get unique sends.
+    const uniqueSends = [];
+    const seen = new Set();
+    for (const n of rows) {
+      const key = `${n.title}|${n.message}|${n.createdAt.toISOString().slice(0, 19)}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        // Count how many users received this notification
+        const recipientCount = await Notification.count({
+          where: {
+            type: 'system',
+            senderId: null,
+            title: n.title,
+            message: n.message,
+            createdAt: n.createdAt,
+          },
+        });
+        uniqueSends.push({
+          id: n.id,
+          title: n.title,
+          message: n.message,
+          imageUrl: n.imageUrl,
+          sentAt: n.createdAt,
+          recipientCount,
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      data: {
+        notifications: uniqueSends,
+        pagination: {
+          page,
+          limit,
+          total: count,
+          totalPages: Math.ceil(count / limit),
+        },
+      },
+    });
+  } catch (error) {
+    console.error('Error fetching notification history:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch notification history', error: error.message });
+  }
+};
+
 module.exports = {
   sendPushNotification,
   getNotificationStats,
   sendTopicPush,
   getQueueStats,
+  getNotificationHistory,
 };

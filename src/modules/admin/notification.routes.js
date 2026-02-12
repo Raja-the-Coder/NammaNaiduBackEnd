@@ -9,6 +9,9 @@ router.get('/stats', authenticateAdmin, notificationController.getNotificationSt
 // Get notification queue statistics (Admin only)
 router.get('/queue-stats', authenticateAdmin, notificationController.getQueueStats);
 
+// Get notification history (Admin only)
+router.get('/history', authenticateAdmin, notificationController.getNotificationHistory);
+
 // Send push notification to target audience (Admin only)
 router.post('/send-push', authenticateAdmin, notificationController.sendPushNotification);
 
