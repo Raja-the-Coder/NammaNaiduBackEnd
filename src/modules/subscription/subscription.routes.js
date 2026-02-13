@@ -9,26 +9,28 @@ const {
     handlePaymentFailed,
     getUserTransactions,
 } = require('./subscription.controller');
+const { applyCoupon } = require('./coupon.controller');
+const { getReferralInfo, applyReferralCode } = require('./referral.controller');
 
 const router = express.Router();
 
 // All routes here require authentication
 router.use(authenticate);
 
-// GET /api/subscription/status - Get current user's subscription status
+// ── Subscription Status ──
 router.get('/status', getSubscriptionStatus);
 
-// POST /api/subscription/create-order - Create Razorpay order for a plan
+// ── Razorpay Payment Flow ──
 router.post(
     '/create-order',
     [
         body('planId').isInt().withMessage('Plan ID must be an integer'),
+        body('couponCode').optional().trim(),
         validate,
     ],
     createRazorpayOrder
 );
 
-// POST /api/subscription/verify-payment - Verify payment and activate subscription
 router.post(
     '/verify-payment',
     [
@@ -40,7 +42,6 @@ router.post(
     verifyRazorpayPayment
 );
 
-// POST /api/subscription/payment-failed - Record payment failure
 router.post(
     '/payment-failed',
     [
@@ -50,15 +51,38 @@ router.post(
     handlePaymentFailed
 );
 
-// GET /api/subscription/transactions - Get user's payment history
+// ── Transaction History ──
 router.get(
     '/transactions',
     [
-        query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
-        query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
+        query('page').optional().isInt({ min: 1 }),
+        query('limit').optional().isInt({ min: 1, max: 100 }),
         validate,
     ],
     getUserTransactions
+);
+
+// ── Coupons ──
+router.post(
+    '/apply-coupon',
+    [
+        body('code').trim().notEmpty().withMessage('Coupon code is required'),
+        body('planId').isInt().withMessage('Plan ID is required'),
+        validate,
+    ],
+    applyCoupon
+);
+
+// ── Referrals ──
+router.get('/referral', getReferralInfo);
+
+router.post(
+    '/referral/apply',
+    [
+        body('referralCode').trim().notEmpty().withMessage('Referral code is required'),
+        validate,
+    ],
+    applyReferralCode
 );
 
 module.exports = router;

@@ -106,6 +106,31 @@ const User = sequelize.define(
       allowNull: false,
       defaultValue: 3,
     },
+    subscriptionExpiresAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      comment: 'When the current subscription expires',
+    },
+    gracePeriodEndsAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      comment: 'Grace period after subscription expiry (7 days)',
+    },
+    referralCode: {
+      type: DataTypes.STRING,
+      allowNull: true,
+      unique: true,
+      comment: 'Unique referral code for this user',
+    },
+    referredBy: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: {
+        model: 'users',
+        key: 'id',
+      },
+      comment: 'User ID of the person who referred this user',
+    },
     lastLoginAt: {
       type: DataTypes.DATE,
       allowNull: true,

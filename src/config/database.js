@@ -234,6 +234,80 @@ const connectDB = async () => {
       console.warn('[DB] Notification imageUrl migration warning (non-fatal):', notifImgMigrationErr.message);
     }
 
+    // Subscription, Coupon & Referral system migration (idempotent)
+    try {
+      // User subscription fields
+      await sequelize.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS "subscriptionExpiresAt" TIMESTAMPTZ;`);
+      await sequelize.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS "gracePeriodEndsAt" TIMESTAMPTZ;`);
+      await sequelize.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS "referralCode" VARCHAR(255) UNIQUE;`);
+      await sequelize.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS "referredBy" INTEGER REFERENCES users(id);`);
+
+      // Coupons table
+      await sequelize.query(`
+        CREATE TABLE IF NOT EXISTS coupons (
+          id SERIAL PRIMARY KEY,
+          code VARCHAR(255) NOT NULL UNIQUE,
+          description VARCHAR(255),
+          "discountType" VARCHAR(20) NOT NULL DEFAULT 'percentage',
+          "discountValue" DECIMAL(10,2) NOT NULL DEFAULT 0,
+          "maxDiscount" DECIMAL(10,2),
+          "minOrderAmount" DECIMAL(10,2) DEFAULT 0,
+          "maxUses" INTEGER,
+          "maxUsesPerUser" INTEGER NOT NULL DEFAULT 1,
+          "usedCount" INTEGER NOT NULL DEFAULT 0,
+          "applicablePlans" TEXT,
+          "validFrom" TIMESTAMPTZ,
+          "validUntil" TIMESTAMPTZ,
+          status VARCHAR(20) NOT NULL DEFAULT 'active',
+          "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+      `);
+
+      // Coupon usage tracking
+      await sequelize.query(`
+        CREATE TABLE IF NOT EXISTS coupon_usages (
+          id SERIAL PRIMARY KEY,
+          "couponId" INTEGER NOT NULL REFERENCES coupons(id) ON DELETE CASCADE,
+          "userId" INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          "transactionId" INTEGER REFERENCES subscription_transactions(id),
+          "discountAmount" DECIMAL(10,2) NOT NULL,
+          "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+      `);
+
+      // Referrals table
+      await sequelize.query(`
+        CREATE TABLE IF NOT EXISTS referrals (
+          id SERIAL PRIMARY KEY,
+          "referrerId" INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          "referredId" INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          status VARCHAR(20) NOT NULL DEFAULT 'pending',
+          "referrerReward" INTEGER NOT NULL DEFAULT 0,
+          "referredReward" INTEGER NOT NULL DEFAULT 0,
+          "rewardedAt" TIMESTAMPTZ,
+          "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          UNIQUE("referredId")
+        );
+      `);
+
+      // Indexes
+      await sequelize.query(`CREATE INDEX IF NOT EXISTS idx_coupons_code ON coupons (code);`);
+      await sequelize.query(`CREATE INDEX IF NOT EXISTS idx_coupons_status ON coupons (status);`);
+      await sequelize.query(`CREATE INDEX IF NOT EXISTS idx_coupon_usages_coupon ON coupon_usages ("couponId");`);
+      await sequelize.query(`CREATE INDEX IF NOT EXISTS idx_coupon_usages_user ON coupon_usages ("userId");`);
+      await sequelize.query(`CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals ("referrerId");`);
+      await sequelize.query(`CREATE INDEX IF NOT EXISTS idx_referrals_referred ON referrals ("referredId");`);
+      await sequelize.query(`CREATE INDEX IF NOT EXISTS idx_users_subscription_expiry ON users ("subscriptionExpiresAt");`);
+      await sequelize.query(`CREATE INDEX IF NOT EXISTS idx_users_referral_code ON users ("referralCode");`);
+
+      console.log('[DB] Subscription, Coupon & Referral migration applied');
+    } catch (subMigrationErr) {
+      console.warn('[DB] Subscription migration warning (non-fatal):', subMigrationErr.message);
+    }
+
     // Seed default admin users (idempotent — skips if email already exists)
     try {
       const adminSeeds = [

@@ -2,52 +2,35 @@ const { Op } = require('sequelize');
 const SubscriptionPlan = require('../../models/SubscriptionPlan.model');
 const SubscriptionTransaction = require('../../models/SubscriptionTransaction.model');
 const User = require('../../models/User.model');
+const Coupon = require('../../models/Coupon.model');
+const CouponUsage = require('../../models/CouponUsage.model');
 const { createOrder, verifyPaymentSignature, fetchPayment } = require('../../config/razorpay');
+const { getUserSubscriptionStatus } = require('../../services/subscription.service');
+const { rewardReferrer } = require('./referral.controller');
+const { validateCoupon, calculateDiscount } = require('./coupon.controller');
 
 // GET /api/subscription/status - current user's subscription status
 const getSubscriptionStatus = async (req, res) => {
     try {
-        const accountId = req.accountId;
-        const user = await User.findOne({ where: { accountId } });
+        const user = await User.findByPk(req.userId);
         if (!user) {
             return res.status(404).json({ success: false, message: 'User not found' });
         }
-        const lastSuccess = await SubscriptionTransaction.findOne({
-            where: { userId: user.id, status: 'success' },
-            order: [['createdAt', 'DESC']],
-            include: [{ model: SubscriptionPlan, as: 'plan', attributes: ['id', 'planName', 'maxProfile', 'validMonth'] }],
-        });
-        const isPaid = !!lastSuccess;
-        let expiresAt = null;
-        let planName = null;
-        let featuresEnabled = ['basic_search', 'view_profiles_limited'];
-        if (lastSuccess && lastSuccess.plan) {
-            planName = lastSuccess.plan.planName;
-            const validMonths = lastSuccess.plan.validMonth || 1;
-            expiresAt = new Date(lastSuccess.createdAt);
-            expiresAt.setMonth(expiresAt.getMonth() + validMonths);
-            // Check if subscription has expired
-            if (new Date() > expiresAt) {
-                return res.json({
-                    success: true,
-                    data: {
-                        isPaid: false,
-                        planName: 'Expired',
-                        expiresAt: expiresAt.toISOString(),
-                        profileViewTokens: user.profileViewTokens ?? 0,
-                        featuresEnabled: ['basic_search', 'view_profiles_limited'],
-                        lastPlan: planName,
-                    },
-                });
-            }
-            featuresEnabled = ['basic_search', 'view_profiles_limited', 'unlimited_views', 'contact_view'];
-        }
+
+        const status = await getUserSubscriptionStatus(user.id);
+        const featuresEnabled = status.isActive
+            ? ['basic_search', 'view_profiles_limited', 'unlimited_views', 'contact_view']
+            : ['basic_search', 'view_profiles_limited'];
+
         res.json({
             success: true,
             data: {
-                isPaid,
-                planName: planName || 'Free',
-                expiresAt: expiresAt ? expiresAt.toISOString() : null,
+                isPaid: status.isActive,
+                isGracePeriod: status.isGracePeriod,
+                planName: status.planName,
+                expiresAt: status.expiresAt,
+                gracePeriodEndsAt: status.gracePeriodEndsAt || null,
+                daysRemaining: status.daysRemaining,
                 profileViewTokens: user.profileViewTokens ?? 0,
                 featuresEnabled,
             },
@@ -61,68 +44,70 @@ const getSubscriptionStatus = async (req, res) => {
 // POST /api/subscription/create-order - Create a Razorpay order for a plan
 const createRazorpayOrder = async (req, res) => {
     try {
-        const { planId } = req.body;
+        const { planId, couponCode } = req.body;
         const accountId = req.accountId;
 
         if (!planId) {
-            return res.status(400).json({
-                success: false,
-                message: 'Plan ID is required',
-            });
+            return res.status(400).json({ success: false, message: 'Plan ID is required' });
         }
 
-        // Find User
         const user = await User.findOne({ where: { accountId } });
-        if (!user) {
-            return res.status(404).json({
-                success: false,
-                message: 'User not found',
-            });
-        }
+        if (!user) return res.status(404).json({ success: false, message: 'User not found' });
 
-        // Find Plan
         const plan = await SubscriptionPlan.findByPk(planId);
-        if (!plan) {
-            return res.status(404).json({
-                success: false,
-                message: 'Subscription plan not found',
-            });
-        }
+        if (!plan) return res.status(404).json({ success: false, message: 'Subscription plan not found' });
 
         if (plan.status !== 'active') {
-            return res.status(400).json({
-                success: false,
-                message: 'This plan is currently inactive',
-            });
+            return res.status(400).json({ success: false, message: 'This plan is currently inactive' });
         }
 
-        // Use offer amount if available, otherwise regular amount
-        const amount = parseFloat(plan.offerAmount) || parseFloat(plan.amount);
+        // Base amount
+        let amount = parseFloat(plan.offerAmount) || parseFloat(plan.amount);
+        let couponId = null;
+        let discountAmount = 0;
+
+        // Apply coupon if provided
+        if (couponCode) {
+            const coupon = await Coupon.findOne({
+                where: { code: couponCode.toUpperCase().trim(), status: 'active' },
+            });
+
+            if (coupon) {
+                const now = new Date();
+                const validation = validateCoupon(coupon, plan, user, now);
+                if (validation.valid) {
+                    const userUsageCount = await CouponUsage.count({
+                        where: { couponId: coupon.id, userId: user.id },
+                    });
+                    if (userUsageCount < coupon.maxUsesPerUser) {
+                        discountAmount = calculateDiscount(coupon, amount);
+                        couponId = coupon.id;
+                        amount = Math.max(1, amount - discountAmount); // Min ₹1 for Razorpay
+                    }
+                }
+            }
+        }
 
         if (amount <= 0) {
-            return res.status(400).json({
-                success: false,
-                message: 'Invalid plan amount',
-            });
+            return res.status(400).json({ success: false, message: 'Invalid plan amount' });
         }
 
-        // Create receipt ID
         const receipt = `sub_${user.id}_${planId}_${Date.now()}`;
 
-        // Create Razorpay order
         const order = await createOrder(amount, receipt, {
             userId: String(user.id),
-            accountId: accountId,
+            accountId,
             planId: String(planId),
             planName: plan.planName,
+            couponId: couponId ? String(couponId) : '',
+            discountAmount: String(discountAmount),
         });
 
-        // Create a pending transaction record
         const transaction = await SubscriptionTransaction.create({
-            paymentId: order.id, // Store Razorpay order ID as paymentId initially
+            paymentId: order.id,
             userId: user.id,
             planId: plan.id,
-            amount: amount,
+            amount,
             status: 'pending',
             paymentMethod: 'Razorpay',
             paymentGateway: 'Razorpay',
@@ -140,6 +125,8 @@ const createRazorpayOrder = async (req, res) => {
                 transactionId: transaction.id,
                 keyId: process.env.RAZORPAY_KEY_ID,
                 planName: plan.planName,
+                discountApplied: discountAmount,
+                originalAmount: parseFloat(plan.offerAmount) || parseFloat(plan.amount),
                 planDetails: {
                     validMonth: plan.validMonth,
                     maxProfile: plan.maxProfile,
@@ -154,10 +141,7 @@ const createRazorpayOrder = async (req, res) => {
         });
     } catch (error) {
         console.error('Error creating Razorpay order:', error);
-        res.status(500).json({
-            success: false,
-            message: error.message || 'Failed to create order',
-        });
+        res.status(500).json({ success: false, message: error.message || 'Failed to create order' });
     }
 };
 
@@ -222,14 +206,48 @@ const verifyRazorpayPayment = async (req, res) => {
             paymentMethod: paymentDetails.method || 'Razorpay',
         });
 
-        // Find user and plan to credit tokens
+        // Find user and plan to credit tokens + set expiry
         const user = await User.findOne({ where: { accountId } });
         const plan = await SubscriptionPlan.findByPk(transaction.planId);
 
         if (user && plan) {
             const tokensToAdd = plan.maxProfile || 0;
             user.profileViewTokens = (user.profileViewTokens || 0) + tokensToAdd;
+
+            // Set subscription expiry
+            const expiresAt = new Date();
+            expiresAt.setMonth(expiresAt.getMonth() + (plan.validMonth || 1));
+            user.subscriptionExpiresAt = expiresAt;
+            user.gracePeriodEndsAt = null; // Clear any grace period
             await user.save();
+
+            // Record coupon usage if coupon was applied
+            const orderDetails = await require('../../config/razorpay').fetchOrder(razorpay_order_id);
+            if (orderDetails.notes && orderDetails.notes.couponId) {
+                const couponId = parseInt(orderDetails.notes.couponId);
+                const discountAmt = parseFloat(orderDetails.notes.discountAmount) || 0;
+                if (couponId && discountAmt > 0) {
+                    try {
+                        await CouponUsage.create({
+                            couponId,
+                            userId: user.id,
+                            transactionId: transaction.id,
+                            discountAmount: discountAmt,
+                        });
+                        // Increment coupon usage counter
+                        await Coupon.increment('usedCount', { where: { id: couponId } });
+                    } catch (couponErr) {
+                        console.error('Error recording coupon usage:', couponErr);
+                    }
+                }
+            }
+
+            // Reward referrer on first purchase
+            try {
+                await rewardReferrer(user.id);
+            } catch (refErr) {
+                console.error('Error rewarding referrer:', refErr);
+            }
 
             res.json({
                 success: true,
@@ -240,6 +258,7 @@ const verifyRazorpayPayment = async (req, res) => {
                     orderId: razorpay_order_id,
                     planName: plan.planName,
                     validMonth: plan.validMonth,
+                    expiresAt: expiresAt.toISOString(),
                     tokensAdded: tokensToAdd,
                     newBalance: user.profileViewTokens,
                     amount: parseFloat(transaction.amount),

@@ -21,6 +21,9 @@ require('./models/RefreshToken.model');
 require('./models/PartnerPreference.model');
 require('./models/Match.model');
 require('./models/DailyRecommendation.model');
+require('./models/Coupon.model');
+require('./models/CouponUsage.model');
+require('./models/Referral.model');
 
 const app = require('./app');
 const { connectDB } = require('./config/database');
@@ -105,6 +108,19 @@ const startServer = async () => {
         }
       }, { timezone: 'UTC' });
       console.log('✅ Notification queue cleanup cron scheduled (3:00 AM IST)');
+
+      // ── Subscription Expiry Check (daily at 1:00 AM IST = 19:30 UTC) ──
+      const { checkExpiredSubscriptions } = require('./services/subscription.service');
+      cron.schedule('30 19 * * *', async () => {
+        console.log('[Cron] Checking expired subscriptions...');
+        try {
+          const result = await checkExpiredSubscriptions();
+          console.log('[Cron] Subscription expiry check:', result);
+        } catch (err) {
+          console.error('[Cron] Subscription expiry check failed:', err.message);
+        }
+      }, { timezone: 'UTC' });
+      console.log('✅ Subscription expiry cron scheduled (1:00 AM IST)');
 
     } catch (cronErr) {
       console.warn('⚠️  node-cron not available, cron jobs disabled:', cronErr.message);

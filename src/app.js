@@ -12,12 +12,15 @@ const masterRoutes = require('./modules/admin/master.routes');
 const subscriptionRoutes = require('./modules/admin/subscription.routes');
 const userSubscriptionRoutes = require('./modules/subscription/subscription.routes');
 const publicSubscriptionRoutes = require('./modules/subscription/subscription.public.routes');
+const webhookRoutes = require('./modules/subscription/webhook.routes');
 const publicMasterRoutes = require('./modules/master/master.public.routes');
 const adminUserRoutes = require('./modules/admin/adminUser.routes');
 const adminUserManagementRoutes = require('./modules/admin/user.routes');
 const photoModerationRoutes = require('./modules/admin/photoModeration.routes');
 const dashboardRoutes = require('./modules/admin/dashboard.routes');
 const adminNotificationRoutes = require('./modules/admin/notification.routes');
+const adminCouponRoutes = require('./modules/admin/coupon.routes');
+const adminReferralRoutes = require('./modules/admin/referral.routes');
 const notificationRoutes = require('./modules/notifications/notification.routes');
 const deviceRoutes = require('./modules/devices/device.routes');
 const messageRoutes = require('./modules/messages/message.routes');
@@ -49,11 +52,15 @@ app.use('/api/users', hobbiesRoutes);
 // Public routes (no authentication required)
 app.use('/api', publicSubscriptionRoutes);
 app.use('/api', publicMasterRoutes);
+// Razorpay webhook (no auth, validated by signature)
+app.use('/api/subscription', webhookRoutes);
 // Authenticated User Subscription routes
 app.use('/api/subscription', userSubscriptionRoutes);
 
 // Register specific admin routes BEFORE generic routes to avoid route conflicts
 app.use('/api/admin', subscriptionRoutes);
+app.use('/api/admin', adminCouponRoutes);
+app.use('/api/admin', adminReferralRoutes);
 app.use('/api/admin', adminUserRoutes);
 app.use('/api/admin', adminUserManagementRoutes); // Admin user management routes (must come before master routes)
 app.use('/api/admin', photoModerationRoutes);
