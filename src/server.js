@@ -25,6 +25,8 @@ require('./models/Coupon.model');
 require('./models/CouponUsage.model');
 require('./models/Referral.model');
 require('./models/AppSetting.model');
+require('./models/ChatReport.model');
+require('./models/ChatTokenUsage.model');
 
 const app = require('./app');
 const { connectDB } = require('./config/database');

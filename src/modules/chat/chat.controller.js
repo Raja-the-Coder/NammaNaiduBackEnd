@@ -5,6 +5,9 @@ const { StreamChat } = require('stream-chat');
 const User = require('../../models/User.model');
 const PersonPhoto = require('../../models/PersonPhoto.model');
 const ProfileAction = require('../../models/ProfileAction.model');
+const ChatTokenUsage = require('../../models/ChatTokenUsage.model');
+const ChatReport = require('../../models/ChatReport.model');
+const { uploadBase64Image } = require('../../services/cloudinary.service');
 const { successResponse, errorResponse } = require('../../utils/response');
 const { Op } = require('sequelize');
 
@@ -178,8 +181,12 @@ const sendMessage = async (req, res) => {
     const { conversationId, text, type = 'text', imageUrl = null, documentUrl = null } = req.body;
     const senderId = req.accountId;
 
-    if (!conversationId || text == null || String(text).trim() === '') {
-      return errorResponse(res, 'conversationId and text are required', 400);
+    // For image messages, text can be empty
+    if (!conversationId) {
+      return errorResponse(res, 'conversationId is required', 400);
+    }
+    if (type === 'text' && (text == null || String(text).trim() === '')) {
+      return errorResponse(res, 'text is required for text messages', 400);
     }
 
     const conversationRef = db().collection('conversations').doc(conversationId);
@@ -200,8 +207,30 @@ const sendMessage = async (req, res) => {
     }
 
     const receiverId = conversationData.participants.find((p) => p !== senderId);
+
+    // Token deduction: check if this is the sender's first message in this conversation
+    const existingUsage = await ChatTokenUsage.findOne({
+      where: { userId: senderId, conversationId },
+    });
+
+    if (!existingUsage) {
+      // First message in this conversation - deduct a token
+      const sender = await User.findOne({ where: { accountId: senderId } });
+      if (!sender || (sender.profileViewTokens || 0) < 1) {
+        return errorResponse(res, 'Insufficient tokens. Please purchase a subscription to get more tokens.', 403, 'INSUFFICIENT_TOKENS');
+      }
+      sender.profileViewTokens = (sender.profileViewTokens || 0) - 1;
+      await sender.save();
+
+      await ChatTokenUsage.create({
+        userId: senderId,
+        conversationId,
+        otherUserId: receiverId,
+      });
+    }
+
     const messageId = `msg_${uuidv4()}`;
-    const textStr = String(text).trim().slice(0, 5000);
+    const textStr = text ? String(text).trim().slice(0, 5000) : '';
 
     const messageData = {
       messageId,
@@ -234,14 +263,16 @@ const sendMessage = async (req, res) => {
       [`unreadCount.${receiverId}`]: FieldValue.increment(1),
     });
 
+    const previewText = type === 'image' ? '📷 Image' : textStr;
+
     await Promise.all([
       db().collection('userConversations').doc(senderId).collection('conversations').doc(conversationId).update({
-        lastMessage: textStr,
+        lastMessage: previewText,
         lastMessageTime: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
       }),
       db().collection('userConversations').doc(receiverId).collection('conversations').doc(conversationId).update({
-        lastMessage: textStr,
+        lastMessage: previewText,
         lastMessageTime: FieldValue.serverTimestamp(),
         unreadCount: FieldValue.increment(1),
         updatedAt: FieldValue.serverTimestamp(),
@@ -369,6 +400,158 @@ const unblockConversation = async (req, res) => {
   }
 };
 
+/**
+ * Report a conversation
+ * POST /api/chat/conversations/:conversationId/report
+ */
+const reportConversation = async (req, res) => {
+  try {
+    const { conversationId } = req.params;
+    const { reason, description } = req.body;
+    const reporterAccountId = req.accountId;
+
+    if (!reason) {
+      return errorResponse(res, 'reason is required', 400);
+    }
+
+    const validReasons = ['inappropriate', 'harassment', 'spam', 'fake_profile', 'other'];
+    if (!validReasons.includes(reason)) {
+      return errorResponse(res, `reason must be one of: ${validReasons.join(', ')}`, 400);
+    }
+
+    const conversationRef = db().collection('conversations').doc(conversationId);
+    const conversationDoc = await conversationRef.get();
+
+    if (!conversationDoc.exists) {
+      return errorResponse(res, 'Conversation not found', 404);
+    }
+
+    const conversationData = conversationDoc.data();
+    if (!conversationData.participants.includes(reporterAccountId)) {
+      return errorResponse(res, 'Unauthorized', 403);
+    }
+
+    const reportedAccountId = conversationData.participants.find((p) => p !== reporterAccountId);
+
+    // Check if already reported this conversation
+    const existing = await ChatReport.findOne({
+      where: { conversationId, reporterAccountId, status: 'pending' },
+    });
+    if (existing) {
+      return errorResponse(res, 'You have already reported this conversation', 409);
+    }
+
+    const report = await ChatReport.create({
+      conversationId,
+      reporterAccountId,
+      reportedAccountId,
+      reason,
+      description: description || null,
+    });
+
+    return successResponse(res, { report }, 201);
+  } catch (error) {
+    console.error('Error reporting conversation:', error);
+    return errorResponse(res, `Failed to report conversation: ${error.message}`, 500);
+  }
+};
+
+/**
+ * Delete a conversation (soft delete for the requesting user)
+ * DELETE /api/chat/conversations/:conversationId
+ */
+const deleteConversation = async (req, res) => {
+  try {
+    const { conversationId } = req.params;
+    const userId = req.accountId;
+
+    const conversationRef = db().collection('conversations').doc(conversationId);
+    const conversationDoc = await conversationRef.get();
+
+    if (!conversationDoc.exists) {
+      return errorResponse(res, 'Conversation not found', 404);
+    }
+
+    const conversationData = conversationDoc.data();
+    if (!conversationData.participants.includes(userId)) {
+      return errorResponse(res, 'Unauthorized', 403);
+    }
+
+    // Remove from user's conversation list (soft delete)
+    const userConvRef = db()
+      .collection('userConversations')
+      .doc(userId)
+      .collection('conversations')
+      .doc(conversationId);
+
+    await userConvRef.delete();
+
+    // Check if the other user has also deleted the conversation
+    const otherUserId = conversationData.participants.find((p) => p !== userId);
+    const otherConvRef = db()
+      .collection('userConversations')
+      .doc(otherUserId)
+      .collection('conversations')
+      .doc(conversationId);
+
+    const otherConvDoc = await otherConvRef.get();
+
+    // If both users have deleted, remove the entire conversation and messages
+    if (!otherConvDoc.exists) {
+      // Delete all messages in the conversation
+      const messagesRef = conversationRef.collection('messages');
+      const messagesSnapshot = await messagesRef.get();
+      const batch = db().batch();
+      messagesSnapshot.docs.forEach((doc) => batch.delete(doc.ref));
+      batch.delete(conversationRef);
+      await batch.commit();
+    }
+
+    return successResponse(res, { message: 'Conversation deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting conversation:', error);
+    return errorResponse(res, `Failed to delete conversation: ${error.message}`, 500);
+  }
+};
+
+/**
+ * Upload a chat image to Cloudinary
+ * POST /api/chat/upload-image
+ */
+const uploadChatImage = async (req, res) => {
+  try {
+    const { image, conversationId } = req.body;
+    const userId = req.accountId;
+
+    if (!image) {
+      return errorResponse(res, 'image (base64) is required', 400);
+    }
+    if (!conversationId) {
+      return errorResponse(res, 'conversationId is required', 400);
+    }
+
+    // Verify user is participant
+    const conversationRef = db().collection('conversations').doc(conversationId);
+    const conversationDoc = await conversationRef.get();
+
+    if (!conversationDoc.exists) {
+      return errorResponse(res, 'Conversation not found', 404);
+    }
+    const conversationData = conversationDoc.data();
+    if (!conversationData.participants.includes(userId)) {
+      return errorResponse(res, 'Unauthorized', 403);
+    }
+
+    const folder = `nammanaidu/chat/${conversationId}`;
+    const result = await uploadBase64Image(image, folder);
+
+    return successResponse(res, { imageUrl: result.url, publicId: result.publicId }, 201);
+  } catch (error) {
+    console.error('Error uploading chat image:', error);
+    return errorResponse(res, `Failed to upload image: ${error.message}`, 500);
+  }
+};
+
 module.exports = {
   createConversation,
   sendMessage,
@@ -376,4 +559,7 @@ module.exports = {
   blockConversation,
   unblockConversation,
   getStreamToken,
+  reportConversation,
+  deleteConversation,
+  uploadChatImage,
 };

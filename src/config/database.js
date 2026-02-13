@@ -339,6 +339,45 @@ const connectDB = async () => {
       console.warn('[DB] App Settings migration warning (non-fatal):', settingsMigrationErr.message);
     }
 
+    // Chat Reports & Chat Token Usages migration (idempotent)
+    try {
+      await sequelize.query(`
+        CREATE TABLE IF NOT EXISTS chat_reports (
+          id SERIAL PRIMARY KEY,
+          "conversationId" VARCHAR(255) NOT NULL,
+          "reporterAccountId" UUID NOT NULL,
+          "reportedAccountId" UUID NOT NULL,
+          reason VARCHAR(50) NOT NULL CHECK (reason IN ('inappropriate','harassment','spam','fake_profile','other')),
+          description TEXT,
+          status VARCHAR(50) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','reviewed','action_taken','dismissed')),
+          "adminNotes" TEXT,
+          "reviewedBy" INTEGER,
+          "reviewedAt" TIMESTAMPTZ,
+          "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+      `);
+      await sequelize.query(`CREATE INDEX IF NOT EXISTS idx_chat_reports_conversation ON chat_reports ("conversationId");`);
+      await sequelize.query(`CREATE INDEX IF NOT EXISTS idx_chat_reports_reporter ON chat_reports ("reporterAccountId");`);
+      await sequelize.query(`CREATE INDEX IF NOT EXISTS idx_chat_reports_status ON chat_reports (status);`);
+
+      await sequelize.query(`
+        CREATE TABLE IF NOT EXISTS chat_token_usages (
+          id SERIAL PRIMARY KEY,
+          "userId" UUID NOT NULL,
+          "conversationId" VARCHAR(255) NOT NULL,
+          "otherUserId" UUID NOT NULL,
+          "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          UNIQUE ("userId", "conversationId")
+        );
+      `);
+      await sequelize.query(`CREATE INDEX IF NOT EXISTS idx_chat_token_usages_user ON chat_token_usages ("userId");`);
+
+      console.log('[DB] Chat Reports & Token Usages migration applied');
+    } catch (chatMigrationErr) {
+      console.warn('[DB] Chat migration warning (non-fatal):', chatMigrationErr.message);
+    }
+
     // Seed default admin users (idempotent — skips if email already exists)
     try {
       const adminSeeds = [

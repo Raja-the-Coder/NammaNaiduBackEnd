@@ -7,6 +7,9 @@ const {
   blockConversation,
   unblockConversation,
   getStreamToken,
+  reportConversation,
+  deleteConversation,
+  uploadChatImage,
 } = require('./chat.controller');
 const { authenticate } = require('../../middleware/auth.middleware');
 const { validate } = require('../../middleware/validation.middleware');
@@ -34,8 +37,7 @@ router.post(
   [
     body('conversationId').notEmpty().withMessage('conversationId is required'),
     body('text')
-      .notEmpty()
-      .withMessage('text is required')
+      .optional()
       .isLength({ max: 5000 })
       .withMessage('Message too long (max 5000 characters)'),
     body('type')
@@ -66,6 +68,41 @@ router.put(
   [param('conversationId').notEmpty().withMessage('conversationId is required')],
   validate,
   unblockConversation
+);
+
+// Report a conversation
+router.post(
+  '/conversations/:conversationId/report',
+  [
+    param('conversationId').notEmpty().withMessage('conversationId is required'),
+    body('reason')
+      .notEmpty()
+      .withMessage('reason is required')
+      .isIn(['inappropriate', 'harassment', 'spam', 'fake_profile', 'other'])
+      .withMessage('Invalid reason'),
+    body('description').optional().isLength({ max: 1000 }).withMessage('Description too long'),
+  ],
+  validate,
+  reportConversation
+);
+
+// Delete a conversation (soft delete for the user)
+router.delete(
+  '/conversations/:conversationId',
+  [param('conversationId').notEmpty().withMessage('conversationId is required')],
+  validate,
+  deleteConversation
+);
+
+// Upload chat image
+router.post(
+  '/upload-image',
+  [
+    body('image').notEmpty().withMessage('image (base64) is required'),
+    body('conversationId').notEmpty().withMessage('conversationId is required'),
+  ],
+  validate,
+  uploadChatImage
 );
 
 module.exports = router;

@@ -22,6 +22,7 @@ const adminNotificationRoutes = require('./modules/admin/notification.routes');
 const adminCouponRoutes = require('./modules/admin/coupon.routes');
 const adminReferralRoutes = require('./modules/admin/referral.routes');
 const adminSettingsRoutes = require('./modules/admin/settings.routes');
+const adminChatRoutes = require('./modules/admin/chatAdmin.routes');
 const { getReferralSettings } = require('./modules/admin/settings.controller');
 const notificationRoutes = require('./modules/notifications/notification.routes');
 const deviceRoutes = require('./modules/devices/device.routes');
@@ -66,6 +67,7 @@ app.use('/api/admin', subscriptionRoutes);
 app.use('/api/admin', adminCouponRoutes);
 app.use('/api/admin', adminReferralRoutes);
 app.use('/api/admin', adminSettingsRoutes);
+app.use('/api/admin', adminChatRoutes);
 app.use('/api/admin', adminUserRoutes);
 app.use('/api/admin', adminUserManagementRoutes); // Admin user management routes (must come before master routes)
 app.use('/api/admin', photoModerationRoutes);
