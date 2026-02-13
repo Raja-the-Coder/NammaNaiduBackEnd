@@ -51,8 +51,6 @@ const Referral = sequelize.define(
     timestamps: true,
     indexes: [
       { fields: ['referrerId'] },
-      { fields: ['referredId'] },
-      { unique: true, fields: ['referredId'] }, // A user can only be referred once
       { fields: ['status'] },
     ],
   }
