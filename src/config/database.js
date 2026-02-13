@@ -308,6 +308,37 @@ const connectDB = async () => {
       console.warn('[DB] Subscription migration warning (non-fatal):', subMigrationErr.message);
     }
 
+    // App Settings table migration (idempotent)
+    try {
+      await sequelize.query(`
+        CREATE TABLE IF NOT EXISTS app_settings (
+          id SERIAL PRIMARY KEY,
+          key VARCHAR(255) NOT NULL UNIQUE,
+          value TEXT NOT NULL,
+          description VARCHAR(255),
+          "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+      `);
+      await sequelize.query(`CREATE INDEX IF NOT EXISTS idx_app_settings_key ON app_settings (key);`);
+
+      // Seed default referral reward settings
+      await sequelize.query(`
+        INSERT INTO app_settings (key, value, description, "createdAt", "updatedAt")
+        VALUES ('referral_referrer_reward', '3', 'Tokens given to the referrer when referred user makes first purchase', NOW(), NOW())
+        ON CONFLICT (key) DO NOTHING;
+      `);
+      await sequelize.query(`
+        INSERT INTO app_settings (key, value, description, "createdAt", "updatedAt")
+        VALUES ('referral_referred_reward', '2', 'Tokens given to the new user when they apply a referral code', NOW(), NOW())
+        ON CONFLICT (key) DO NOTHING;
+      `);
+
+      console.log('[DB] App Settings migration applied');
+    } catch (settingsMigrationErr) {
+      console.warn('[DB] App Settings migration warning (non-fatal):', settingsMigrationErr.message);
+    }
+
     // Seed default admin users (idempotent — skips if email already exists)
     try {
       const adminSeeds = [

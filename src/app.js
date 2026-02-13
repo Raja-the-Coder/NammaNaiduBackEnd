@@ -21,6 +21,8 @@ const dashboardRoutes = require('./modules/admin/dashboard.routes');
 const adminNotificationRoutes = require('./modules/admin/notification.routes');
 const adminCouponRoutes = require('./modules/admin/coupon.routes');
 const adminReferralRoutes = require('./modules/admin/referral.routes');
+const adminSettingsRoutes = require('./modules/admin/settings.routes');
+const { getReferralSettings } = require('./modules/admin/settings.controller');
 const notificationRoutes = require('./modules/notifications/notification.routes');
 const deviceRoutes = require('./modules/devices/device.routes');
 const messageRoutes = require('./modules/messages/message.routes');
@@ -52,6 +54,8 @@ app.use('/api/users', hobbiesRoutes);
 // Public routes (no authentication required)
 app.use('/api', publicSubscriptionRoutes);
 app.use('/api', publicMasterRoutes);
+// Public settings route (no auth)
+app.get('/api/settings/referral', getReferralSettings);
 // Razorpay webhook (no auth, validated by signature)
 app.use('/api/subscription', webhookRoutes);
 // Authenticated User Subscription routes
@@ -61,6 +65,7 @@ app.use('/api/subscription', userSubscriptionRoutes);
 app.use('/api/admin', subscriptionRoutes);
 app.use('/api/admin', adminCouponRoutes);
 app.use('/api/admin', adminReferralRoutes);
+app.use('/api/admin', adminSettingsRoutes);
 app.use('/api/admin', adminUserRoutes);
 app.use('/api/admin', adminUserManagementRoutes); // Admin user management routes (must come before master routes)
 app.use('/api/admin', photoModerationRoutes);

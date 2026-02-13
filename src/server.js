@@ -24,6 +24,7 @@ require('./models/DailyRecommendation.model');
 require('./models/Coupon.model');
 require('./models/CouponUsage.model');
 require('./models/Referral.model');
+require('./models/AppSetting.model');
 
 const app = require('./app');
 const { connectDB } = require('./config/database');

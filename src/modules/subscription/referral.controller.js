@@ -1,10 +1,30 @@
 const User = require('../../models/User.model');
 const Referral = require('../../models/Referral.model');
+const AppSetting = require('../../models/AppSetting.model');
 const crypto = require('crypto');
 
-// Reward configuration
-const REFERRER_TOKEN_REWARD = 3;  // Tokens given to the referrer
-const REFERRED_TOKEN_REWARD = 2;  // Tokens given to the new user
+// Fallback defaults (used if DB setting not found)
+const DEFAULT_REFERRER_TOKEN_REWARD = 3;
+const DEFAULT_REFERRED_TOKEN_REWARD = 2;
+
+/**
+ * Read reward amounts from app_settings table, with fallback to defaults
+ */
+const getRewardConfig = async () => {
+  try {
+    const referrerSetting = await AppSetting.findOne({ where: { key: 'referral_referrer_reward' } });
+    const referredSetting = await AppSetting.findOne({ where: { key: 'referral_referred_reward' } });
+    return {
+      REFERRER_TOKEN_REWARD: parseInt(referrerSetting?.value || String(DEFAULT_REFERRER_TOKEN_REWARD), 10),
+      REFERRED_TOKEN_REWARD: parseInt(referredSetting?.value || String(DEFAULT_REFERRED_TOKEN_REWARD), 10),
+    };
+  } catch {
+    return {
+      REFERRER_TOKEN_REWARD: DEFAULT_REFERRER_TOKEN_REWARD,
+      REFERRED_TOKEN_REWARD: DEFAULT_REFERRED_TOKEN_REWARD,
+    };
+  }
+};
 
 /**
  * GET /api/subscription/referral - Get current user's referral info
@@ -19,6 +39,8 @@ const getReferralInfo = async (req, res) => {
       user.referralCode = generateReferralCode(user.userCode);
       await user.save();
     }
+
+    const rewards = await getRewardConfig();
 
     // Get referral stats
     const totalReferrals = await Referral.count({ where: { referrerId: user.id } });
@@ -52,8 +74,8 @@ const getReferralInfo = async (req, res) => {
           totalTokensEarned,
         },
         rewards: {
-          referrerTokens: REFERRER_TOKEN_REWARD,
-          referredTokens: REFERRED_TOKEN_REWARD,
+          referrerTokens: rewards.REFERRER_TOKEN_REWARD,
+          referredTokens: rewards.REFERRED_TOKEN_REWARD,
         },
         recentReferrals: recentReferrals.map(r => ({
           id: r.id,
@@ -116,16 +138,17 @@ const applyReferralCode = async (req, res) => {
     await user.save();
 
     // Give immediate reward to referred user (new signup bonus)
-    user.profileViewTokens = (user.profileViewTokens || 0) + REFERRED_TOKEN_REWARD;
+    const rewards = await getRewardConfig();
+    user.profileViewTokens = (user.profileViewTokens || 0) + rewards.REFERRED_TOKEN_REWARD;
     await user.save();
-    referral.referredReward = REFERRED_TOKEN_REWARD;
+    referral.referredReward = rewards.REFERRED_TOKEN_REWARD;
     await referral.save();
 
     res.json({
       success: true,
-      message: `Referral applied! You received ${REFERRED_TOKEN_REWARD} profile view tokens.`,
+      message: `Referral applied! You received ${rewards.REFERRED_TOKEN_REWARD} profile view tokens.`,
       data: {
-        tokensReceived: REFERRED_TOKEN_REWARD,
+        tokensReceived: rewards.REFERRED_TOKEN_REWARD,
         newBalance: user.profileViewTokens,
         referrerCode: referralCode,
       },
@@ -148,18 +171,20 @@ const rewardReferrer = async (userId) => {
 
     if (!referral) return null;
 
+    const rewards = await getRewardConfig();
+
     // Mark as completed
     referral.status = 'rewarded';
-    referral.referrerReward = REFERRER_TOKEN_REWARD;
+    referral.referrerReward = rewards.REFERRER_TOKEN_REWARD;
     referral.rewardedAt = new Date();
     await referral.save();
 
     // Credit referrer
     const referrer = await User.findByPk(referral.referrerId);
     if (referrer) {
-      referrer.profileViewTokens = (referrer.profileViewTokens || 0) + REFERRER_TOKEN_REWARD;
+      referrer.profileViewTokens = (referrer.profileViewTokens || 0) + rewards.REFERRER_TOKEN_REWARD;
       await referrer.save();
-      console.log(`[Referral] Rewarded user ${referrer.id} with ${REFERRER_TOKEN_REWARD} tokens for referral`);
+      console.log(`[Referral] Rewarded user ${referrer.id} with ${rewards.REFERRER_TOKEN_REWARD} tokens for referral`);
     }
 
     return referral;
@@ -182,6 +207,4 @@ module.exports = {
   getReferralInfo,
   applyReferralCode,
   rewardReferrer,
-  REFERRER_TOKEN_REWARD,
-  REFERRED_TOKEN_REWARD,
 };
