@@ -16,6 +16,7 @@ const PersonPhoto = require('../../models/PersonPhoto.model');
 const PartnerPreference = require('../../models/PartnerPreference.model');
 const Match = require('../../models/Match.model');
 const DailyRecommendation = require('../../models/DailyRecommendation.model');
+const { getBlockedAccountIds } = require('./safety.controller');
 const {
   computeCompatibility,
   generateRecommendationsForUser,
@@ -106,10 +107,17 @@ const getRecommendations = async (req, res) => {
       }
     }
 
-    // Fetch recommended user profiles
-    const recIds = recs.map((r) => r.recommendedAccountId);
+    // Fetch recommended user profiles, excluding blocked & paused
+    const blockedIds = await getBlockedAccountIds(accountId);
+    const recIds = recs
+      .map((r) => r.recommendedAccountId)
+      .filter((id) => !blockedIds.includes(id));
     const users = await User.findAll({
-      where: { accountId: { [Op.in]: recIds } },
+      where: {
+        accountId: { [Op.in]: recIds },
+        isActive: true,
+        profilePaused: { [Op.or]: [false, null] },
+      },
       include: [
         { model: BasicDetail, as: 'basicDetail', required: false },
         { model: PersonPhoto, as: 'personPhoto', required: false },

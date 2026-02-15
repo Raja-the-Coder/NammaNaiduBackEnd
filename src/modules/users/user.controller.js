@@ -9,6 +9,7 @@ const HoroscopeDetail = require('../../models/HoroscopeDetail.model');
 const Hobby = require('../../models/Hobby.model');
 const FamilyDetail = require('../../models/FamilyDetail.model');
 const PartnerPreference = require('../../models/PartnerPreference.model');
+const { getBlockedAccountIds } = require('./safety.controller');
 const {
   detectAndCreateMatch,
   checkDailyActionLimit,
@@ -388,6 +389,15 @@ const viewProfileDetails = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: 'Cannot view details of your own profile',
+      });
+    }
+
+    // Check if either user has blocked the other
+    const blockedIds = await getBlockedAccountIds(currentUserId);
+    if (blockedIds.includes(accountId)) {
+      return res.status(403).json({
+        success: false,
+        message: 'This profile is not available',
       });
     }
 
@@ -963,6 +973,15 @@ const createProfileAction = async (req, res) => {
       });
     }
 
+    // Check if either user has blocked the other
+    const blockedIds = await getBlockedAccountIds(userId);
+    if (blockedIds.includes(targetUserId)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Cannot perform this action on a blocked user',
+      });
+    }
+
     // Prevent self-action
     if (userId === targetUserId) {
       return res.status(400).json({
@@ -1461,19 +1480,27 @@ const getOppositeGenderProfiles = async (req, res) => {
       }
     }
 
+    // Get blocked user IDs to exclude from results
+    const blockedIds = await getBlockedAccountIds(currentUser.accountId);
+
+    // Build exclusion filter for blocked & paused profiles
+    const exclusionFilter = {
+      gender: oppositeGender,
+      id: { [Op.ne]: targetUserId },
+      isActive: true,
+      profileVisibility: { [Op.or]: ['public', 'members', null] },
+      [Op.and]: [
+        { profilePaused: { [Op.or]: [false, null] } }, // Exclude paused profiles
+      ],
+    };
+    if (blockedIds.length > 0) {
+      exclusionFilter.accountId = { [Op.notIn]: blockedIds };
+    }
+
     // Find all users with opposite gender, excluding the current user
     // Filter by visibility: exclude 'hidden' profiles; only show 'public' or 'members' (default)
     const oppositeGenderUsers = await User.findAll({
-      where: {
-        gender: oppositeGender,
-        id: {
-          [Op.ne]: targetUserId, // Exclude current user
-        },
-        isActive: true, // Only active users
-        profileVisibility: {
-          [Op.or]: ['public', 'members', null], // Exclude hidden profiles
-        },
-      },
+      where: exclusionFilter,
       attributes: {
         exclude: ['password'], // Exclude password from response
       },
@@ -1691,13 +1718,20 @@ const searchProfiles = async (req, res) => {
       });
     }
 
+    // Get blocked user IDs to exclude from search results
+    const blockedIds = req.accountId ? await getBlockedAccountIds(req.accountId) : [];
+
     const whereClause = {
       id: { [Op.ne]: userId || 0 },
       isActive: true,
       profileVisibility: {
         [Op.or]: ['public', 'members', null], // Exclude hidden profiles
       },
+      profilePaused: { [Op.or]: [false, null] }, // Exclude paused profiles
     };
+    if (blockedIds.length > 0) {
+      whereClause.accountId = { [Op.notIn]: blockedIds };
+    }
 
     if (gender) {
       whereClause.gender = gender;

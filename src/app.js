@@ -28,6 +28,10 @@ const notificationRoutes = require('./modules/notifications/notification.routes'
 const deviceRoutes = require('./modules/devices/device.routes');
 const messageRoutes = require('./modules/messages/message.routes');
 const chatRoutes = require('./modules/chat/chat.routes');
+const safetyRoutes = require('./modules/users/safety.routes');
+const adminSafetyRoutes = require('./modules/admin/safetyAdmin.routes');
+const adminCmsRoutes = require('./modules/admin/cms.routes');
+const publicCmsRoutes = require('./modules/public/publicCms.routes');
 const errorHandler = require('./middleware/error.middleware');
 const { apiLogger, errorLogger } = require('./middleware/apiLogger.middleware');
 
@@ -68,6 +72,7 @@ app.use('/api/admin', adminCouponRoutes);
 app.use('/api/admin', adminReferralRoutes);
 app.use('/api/admin', adminSettingsRoutes);
 app.use('/api/admin', adminChatRoutes);
+app.use('/api/admin', adminSafetyRoutes);
 app.use('/api/admin', adminUserRoutes);
 app.use('/api/admin', adminUserManagementRoutes); // Admin user management routes (must come before master routes)
 app.use('/api/admin', photoModerationRoutes);
@@ -78,6 +83,11 @@ app.use('/api/notifications', notificationRoutes);
 app.use('/api/devices', deviceRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/chat', chatRoutes);
+app.use('/api/users', safetyRoutes);
+
+// CMS routes
+app.use('/api/admin', adminCmsRoutes);
+app.use('/api', publicCmsRoutes);
 
 app.use((req, res) => {
   res.status(404).json({ message: 'Route not found' });

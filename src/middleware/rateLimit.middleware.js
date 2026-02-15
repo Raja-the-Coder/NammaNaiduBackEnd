@@ -76,10 +76,29 @@ const generalApiLimiter = rateLimit({
   },
 });
 
+// Interest/profile-action: 20 per day per user (not per IP)
+const interestLimiter = rateLimit({
+  windowMs: 24 * 60 * 60 * 1000, // 24 hours
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: 'Daily interest limit reached (20/day). Upgrade to premium for more.',
+    error: 'RATE_LIMIT_INTEREST',
+  },
+  keyGenerator: (req) => {
+    // Rate limit per authenticated user, not per IP
+    return `interest:${req.accountId || req.ip}`;
+  },
+  validate: false,
+});
+
 module.exports = {
   otpSendLimiter,
   otpVerifyLimiter,
   loginLimiter,
   passwordResetLimiter,
   generalApiLimiter,
+  interestLimiter,
 };

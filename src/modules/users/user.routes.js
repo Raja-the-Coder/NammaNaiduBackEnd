@@ -37,6 +37,7 @@ const {
 const photoRoutes = require('./photo.routes');
 const { authenticate } = require('../../middleware/auth.middleware');
 const { validate } = require('../../middleware/validation.middleware');
+const { interestLimiter } = require('../../middleware/rateLimit.middleware');
 
 const router = express.Router();
 
@@ -169,6 +170,7 @@ router.get('/', getAllUsers);
 // Create or update profile action (interest, shortlist, reject)
 router.post(
   '/profile-actions',
+  interestLimiter,
   [
     body('actionType')
       .isIn(['interest', 'shortlist', 'reject', 'accept'])

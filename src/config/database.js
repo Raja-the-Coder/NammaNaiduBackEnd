@@ -378,6 +378,115 @@ const connectDB = async () => {
       console.warn('[DB] Chat migration warning (non-fatal):', chatMigrationErr.message);
     }
 
+    // Safety & Abuse system migration (idempotent)
+    try {
+      // user_blocks table
+      await sequelize.query(`
+        CREATE TABLE IF NOT EXISTS user_blocks (
+          id SERIAL PRIMARY KEY,
+          "blockerAccountId" UUID NOT NULL,
+          "blockedAccountId" UUID NOT NULL,
+          reason TEXT,
+          "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          UNIQUE("blockerAccountId", "blockedAccountId")
+        );
+      `);
+      await sequelize.query(`CREATE INDEX IF NOT EXISTS idx_user_blocks_blocker ON user_blocks ("blockerAccountId");`);
+      await sequelize.query(`CREATE INDEX IF NOT EXISTS idx_user_blocks_blocked ON user_blocks ("blockedAccountId");`);
+
+      // user_reports table
+      await sequelize.query(`
+        CREATE TABLE IF NOT EXISTS user_reports (
+          id SERIAL PRIMARY KEY,
+          "reporterAccountId" UUID NOT NULL,
+          "reportedAccountId" UUID NOT NULL,
+          reason VARCHAR(50) NOT NULL,
+          description TEXT,
+          status VARCHAR(20) NOT NULL DEFAULT 'pending',
+          "adminNotes" TEXT,
+          "reviewedBy" INTEGER,
+          "reviewedAt" TIMESTAMPTZ,
+          "actionTaken" VARCHAR(50),
+          "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+      `);
+      await sequelize.query(`CREATE INDEX IF NOT EXISTS idx_user_reports_reporter ON user_reports ("reporterAccountId");`);
+      await sequelize.query(`CREATE INDEX IF NOT EXISTS idx_user_reports_reported ON user_reports ("reportedAccountId");`);
+      await sequelize.query(`CREATE INDEX IF NOT EXISTS idx_user_reports_status ON user_reports (status);`);
+
+      // New columns on users table for safety
+      await sequelize.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS "reportCount" INTEGER DEFAULT 0;`);
+      await sequelize.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS "isFlagged" BOOLEAN DEFAULT false;`);
+      await sequelize.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS "flagReason" TEXT;`);
+      await sequelize.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS "profilePaused" BOOLEAN DEFAULT false;`);
+      await sequelize.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS "verifiedOnlyChat" BOOLEAN DEFAULT false;`);
+      await sequelize.query(`CREATE INDEX IF NOT EXISTS idx_users_is_flagged ON users ("isFlagged");`);
+      await sequelize.query(`CREATE INDEX IF NOT EXISTS idx_users_profile_paused ON users ("profilePaused");`);
+
+      console.log('[DB] Safety & Abuse migration applied');
+    } catch (safetyMigrationErr) {
+      console.warn('[DB] Safety migration warning (non-fatal):', safetyMigrationErr.message);
+    }
+
+    // CMS: page_contents and success_stories tables (idempotent)
+    try {
+      await sequelize.query(`
+        CREATE TABLE IF NOT EXISTS page_contents (
+          id SERIAL PRIMARY KEY,
+          slug VARCHAR(100) NOT NULL UNIQUE,
+          title VARCHAR(255) NOT NULL,
+          content TEXT NOT NULL DEFAULT '',
+          "metaDescription" VARCHAR(500),
+          "isPublished" BOOLEAN DEFAULT false,
+          "lastEditedBy" INTEGER,
+          "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+      `);
+      await sequelize.query(`CREATE INDEX IF NOT EXISTS idx_page_contents_slug ON page_contents (slug);`);
+
+      await sequelize.query(`
+        CREATE TABLE IF NOT EXISTS success_stories (
+          id SERIAL PRIMARY KEY,
+          "groomName" VARCHAR(100) NOT NULL,
+          "brideName" VARCHAR(100) NOT NULL,
+          subcaste VARCHAR(100),
+          "marriedYear" INTEGER,
+          story TEXT NOT NULL,
+          "photoUrl" VARCHAR(500),
+          rating INTEGER DEFAULT 5,
+          "isPublished" BOOLEAN DEFAULT true,
+          "displayOrder" INTEGER DEFAULT 0,
+          "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+      `);
+
+      // Seed default page slugs
+      const defaultPages = [
+        { slug: 'about-us', title: 'About Us' },
+        { slug: 'privacy-policy', title: 'Privacy Policy' },
+        { slug: 'terms-of-use', title: 'Terms of Use' },
+        { slug: 'security-tips', title: 'Security Tips' },
+        { slug: 'cookie-policy', title: 'Cookie Policy' },
+        { slug: 'contact-us', title: 'Contact Us' },
+      ];
+      for (const page of defaultPages) {
+        await sequelize.query(
+          `INSERT INTO page_contents (slug, title, content, "isPublished", "createdAt", "updatedAt")
+           VALUES (:slug, :title, '', false, NOW(), NOW())
+           ON CONFLICT (slug) DO NOTHING;`,
+          { replacements: page }
+        );
+      }
+
+      console.log('[DB] CMS page_contents & success_stories migration applied');
+    } catch (cmsMigrationErr) {
+      console.warn('[DB] CMS migration warning (non-fatal):', cmsMigrationErr.message);
+    }
+
     // Seed default admin users (idempotent — skips if email already exists)
     try {
       const adminSeeds = [

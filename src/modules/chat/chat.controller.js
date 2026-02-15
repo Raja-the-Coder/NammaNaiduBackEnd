@@ -10,6 +10,7 @@ const ChatReport = require('../../models/ChatReport.model');
 const { uploadBase64Image } = require('../../services/cloudinary.service');
 const { successResponse, errorResponse } = require('../../utils/response');
 const { Op } = require('sequelize');
+const { getBlockedAccountIds } = require('../users/safety.controller');
 
 const db = () => getFirestore();
 
@@ -59,6 +60,21 @@ const createConversation = async (req, res) => {
 
     if (currentUserId === otherUserId) {
       return errorResponse(res, 'Cannot create conversation with yourself', 400);
+    }
+
+    // Block check: prevent conversation if either user has blocked the other
+    const blockedIds = await getBlockedAccountIds(currentUserId);
+    if (blockedIds.includes(otherUserId)) {
+      return errorResponse(res, 'Cannot start conversation with this user', 403);
+    }
+
+    // Verified-only messaging check
+    const targetUser = await User.findOne({ where: { accountId: otherUserId }, attributes: ['verifiedOnlyChat', 'profileveriffied'] });
+    if (targetUser && targetUser.verifiedOnlyChat) {
+      const currentUser = await User.findOne({ where: { accountId: currentUserId }, attributes: ['profileveriffied'] });
+      if (!currentUser || currentUser.profileveriffied !== 1) {
+        return errorResponse(res, 'This user only accepts messages from verified profiles. Please verify your profile first.', 403);
+      }
     }
 
     const conversationsRef = db().collection('conversations');
