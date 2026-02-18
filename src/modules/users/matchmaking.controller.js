@@ -17,6 +17,7 @@ const PartnerPreference = require('../../models/PartnerPreference.model');
 const Match = require('../../models/Match.model');
 const DailyRecommendation = require('../../models/DailyRecommendation.model');
 const { getBlockedAccountIds } = require('./safety.controller');
+const PrivacySettings = require('../../models/PrivacySettings.model');
 const {
   computeCompatibility,
   generateRecommendationsForUser,
@@ -107,7 +108,7 @@ const getRecommendations = async (req, res) => {
       }
     }
 
-    // Fetch recommended user profiles, excluding blocked & paused
+    // Fetch recommended user profiles, excluding blocked, paused, and privacy-hidden
     const blockedIds = await getBlockedAccountIds(accountId);
     const recIds = recs
       .map((r) => r.recommendedAccountId)
@@ -121,6 +122,20 @@ const getRecommendations = async (req, res) => {
       include: [
         { model: BasicDetail, as: 'basicDetail', required: false },
         { model: PersonPhoto, as: 'personPhoto', required: false },
+        {
+          model: PrivacySettings,
+          as: 'privacySettings',
+          required: false,
+          where: {
+            [Op.or]: [
+              { profileVisibility: { [Op.in]: ['public', 'members'] } },
+              { profileVisibility: null },
+            ],
+            [Op.and]: [
+              { [Op.or]: [{ hideFromSearch: false }, { hideFromSearch: null }] },
+            ],
+          },
+        },
       ],
       attributes: { exclude: ['password'] },
     });

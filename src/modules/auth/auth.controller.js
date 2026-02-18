@@ -17,6 +17,9 @@ const {
   verifyOtpViaMSG91,
   resendOtpViaMSG91,
 } = require('../../services/sms.service');
+const PrivacySettings = require('../../models/PrivacySettings.model');
+const ConsentLog = require('../../models/ConsentLog.model');
+const { CURRENT_POLICY_VERSION } = require('../users/legal.controller');
 
 // Helper: hash an OTP code before storing in DB
 const hashOtp = async (otpCode) => {
@@ -45,6 +48,12 @@ const findOrCreateUser = async (phone, { name, gender, profileFor, countryCode }
       phone,
       otpVerifiedAt: new Date(),
     });
+    // Auto-create default privacy settings
+    try {
+      await PrivacySettings.create({ accountId: user.accountId });
+    } catch (privacyErr) {
+      console.warn('Privacy settings auto-create warning:', privacyErr.message);
+    }
     return { user, isNewUser: true };
   } catch (createErr) {
     // 3. If unique constraint failed, find again including soft-deleted records
@@ -136,6 +145,13 @@ const register = async (req, res) => {
       verified: false,
       payload: { name },
     });
+
+    // Auto-create default privacy settings for the new user
+    try {
+      await PrivacySettings.create({ accountId: user.accountId });
+    } catch (privacyErr) {
+      console.warn('Privacy settings auto-create warning:', privacyErr.message);
+    }
 
     // Send OTP via email (supports Resend API and SMTP)
     try {
@@ -452,6 +468,13 @@ const verifyRegistrationOtp = async (req, res) => {
       otpVerifiedAt: new Date(),
       userCode: userCode, // Explicitly set userCode
     });
+
+    // Auto-create default privacy settings
+    try {
+      await PrivacySettings.create({ accountId: user.accountId });
+    } catch (privacyErr) {
+      console.warn('Privacy settings auto-create warning:', privacyErr.message);
+    }
 
     if (otpRecord) {
       await otpRecord.destroy();
@@ -907,6 +930,12 @@ const firebaseLogin = async (req, res) => {
         phone,
         otpVerifiedAt: new Date(),
       });
+      // Auto-create default privacy settings
+      try {
+        await PrivacySettings.create({ accountId: user.accountId });
+      } catch (privacyErr) {
+        console.warn('Privacy settings auto-create warning:', privacyErr.message);
+      }
     } else if (!user.otpVerifiedAt) {
       user.otpVerifiedAt = new Date();
       await user.save();

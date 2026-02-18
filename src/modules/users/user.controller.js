@@ -16,6 +16,9 @@ const {
   computeCompatibility,
   buildPreferenceFilter,
 } = require('../../services/matchmaking.service');
+const PrivacySettings = require('../../models/PrivacySettings.model');
+const { getPrivacyContext } = require('../../services/privacyCheck.service');
+const { literal } = require('sequelize');
 
 // ----- Flow: /me, profile completion, registration progress -----
 
@@ -316,7 +319,7 @@ const getProfileByAccountId = async (req, res) => {
 
     // Check if viewing own profile
     const isOwnProfile = currentUserId === accountId;
-    
+
     // Check if user has already viewed this profile
     let hasViewed = false;
     if (!isOwnProfile) {
@@ -329,26 +332,55 @@ const getProfileByAccountId = async (req, res) => {
         });
         hasViewed = !!existingView;
       } catch (profileViewError) {
-        // If ProfileView table doesn't exist or query fails, assume not viewed
         console.error('Error checking ProfileView (table may not exist):', profileViewError.message);
         hasViewed = false;
       }
     }
 
-    // Exclude sensitive information if not own profile and not viewed
-    if (!isOwnProfile && !hasViewed) {
-      // Hide sensitive fields
-      if (userData.basicDetail) {
-        delete userData.basicDetail.email;
-        delete userData.basicDetail.dateOfBirth;
-        delete userData.basicDetail.city;
-        delete userData.basicDetail.state;
-        delete userData.basicDetail.country;
-        delete userData.basicDetail.pincode;
-        // Keep other basic info visible (height, marital status, religion, etc.)
+    // --- Privacy enforcement ---
+    const privacyCtx = await getPrivacyContext(currentUserId, accountId);
+
+    // If profile is hidden and not own profile, return 404
+    if (!isOwnProfile && privacyCtx.settings) {
+      if (privacyCtx.settings.profileVisibility === 'hidden') {
+        return res.status(404).json({ success: false, message: 'User not found' });
       }
-      delete userData.email;
-      delete userData.phone;
+    }
+
+    // Contact privacy: use privacy settings instead of just hasViewed
+    if (!isOwnProfile) {
+      if (!privacyCtx.phoneResult.allowed) {
+        delete userData.phone;
+        userData.phoneHidden = true;
+        userData.phoneHiddenReason = privacyCtx.phoneResult.reason;
+      }
+      if (!privacyCtx.emailResult.allowed) {
+        delete userData.email;
+        if (userData.basicDetail) {
+          delete userData.basicDetail.email;
+        }
+        userData.emailHidden = true;
+        userData.emailHiddenReason = privacyCtx.emailResult.reason;
+      }
+      // Always hide location details if not viewed (preserve existing behavior)
+      if (!hasViewed) {
+        if (userData.basicDetail) {
+          delete userData.basicDetail.dateOfBirth;
+          delete userData.basicDetail.city;
+          delete userData.basicDetail.state;
+          delete userData.basicDetail.country;
+          delete userData.basicDetail.pincode;
+        }
+      }
+    }
+
+    // Photo privacy: add blur metadata
+    if (!isOwnProfile) {
+      userData.photoPrivacy = {
+        isBlurred: privacyCtx.photoResult.blurred,
+        photosAllowed: privacyCtx.photoResult.allowed,
+        blurReason: privacyCtx.photoResult.reason,
+      };
     }
 
     // Exclude password always
@@ -450,6 +482,25 @@ const viewProfileDetails = async (req, res) => {
 
       delete userData.password;
 
+      // Apply privacy rules even for already-viewed profiles
+      const privCtx = await getPrivacyContext(currentUserId, accountId);
+      if (!privCtx.phoneResult.allowed) {
+        delete userData.phone;
+        userData.phoneHidden = true;
+        userData.phoneHiddenReason = privCtx.phoneResult.reason;
+      }
+      if (!privCtx.emailResult.allowed) {
+        delete userData.email;
+        if (userData.basicDetail) delete userData.basicDetail.email;
+        userData.emailHidden = true;
+        userData.emailHiddenReason = privCtx.emailResult.reason;
+      }
+      userData.photoPrivacy = {
+        isBlurred: privCtx.photoResult.blurred,
+        photosAllowed: privCtx.photoResult.allowed,
+        blurReason: privCtx.photoResult.reason,
+      };
+
       return res.json({
         success: true,
         message: 'Profile details retrieved',
@@ -533,6 +584,25 @@ const viewProfileDetails = async (req, res) => {
 
     // Exclude password
     delete userData.password;
+
+    // Apply privacy rules for the new view
+    const viewPrivCtx = await getPrivacyContext(currentUserId, accountId);
+    if (!viewPrivCtx.phoneResult.allowed) {
+      delete userData.phone;
+      userData.phoneHidden = true;
+      userData.phoneHiddenReason = viewPrivCtx.phoneResult.reason;
+    }
+    if (!viewPrivCtx.emailResult.allowed) {
+      delete userData.email;
+      if (userData.basicDetail) delete userData.basicDetail.email;
+      userData.emailHidden = true;
+      userData.emailHiddenReason = viewPrivCtx.emailResult.reason;
+    }
+    userData.photoPrivacy = {
+      isBlurred: viewPrivCtx.photoResult.blurred,
+      photosAllowed: viewPrivCtx.photoResult.allowed,
+      blurReason: viewPrivCtx.photoResult.reason,
+    };
 
     res.json({
       success: true,
@@ -1483,28 +1553,76 @@ const getOppositeGenderProfiles = async (req, res) => {
     // Get blocked user IDs to exclude from results
     const blockedIds = await getBlockedAccountIds(currentUser.accountId);
 
+    // Fetch viewer's caste/religion for community-based visibility filtering
+    const viewerBasic = await BasicDetail.findOne({
+      where: { accountId: currentUser.accountId },
+      attributes: ['caste', 'religion'],
+    });
+    const viewerCaste = viewerBasic?.caste || null;
+    const viewerReligion = viewerBasic?.religion || null;
+
     // Build exclusion filter for blocked & paused profiles
     const exclusionFilter = {
       gender: oppositeGender,
       id: { [Op.ne]: targetUserId },
       isActive: true,
-      profileVisibility: { [Op.or]: ['public', 'members', null] },
       [Op.and]: [
-        { profilePaused: { [Op.or]: [false, null] } }, // Exclude paused profiles
+        { profilePaused: { [Op.or]: [false, null] } },
       ],
     };
     if (blockedIds.length > 0) {
       exclusionFilter.accountId = { [Op.notIn]: blockedIds };
     }
 
+    // Build privacy-based where clause for the PrivacySettings join
+    const privacyWhere = {
+      [Op.or]: [
+        { profileVisibility: { [Op.in]: ['public', 'members'] } },
+        { profileVisibility: null },
+      ],
+      [Op.and]: [
+        { [Op.or]: [{ hideFromSearch: false }, { hideFromSearch: null }] },
+      ],
+    };
+
+    // Community-based visibility filters (applied via Sequelize literal on JSONB)
+    const communityLiterals = [];
+    if (viewerCaste) {
+      communityLiterals.push(
+        literal(`("privacySettings"."visibleToCastes" IS NULL OR "privacySettings"."visibleToCastes" @> '${JSON.stringify([viewerCaste])}'::jsonb)`)
+      );
+    } else {
+      communityLiterals.push(literal(`"privacySettings"."visibleToCastes" IS NULL`));
+    }
+    if (viewerReligion) {
+      communityLiterals.push(
+        literal(`("privacySettings"."visibleToReligions" IS NULL OR "privacySettings"."visibleToReligions" @> '${JSON.stringify([viewerReligion])}'::jsonb)`)
+      );
+    } else {
+      communityLiterals.push(literal(`"privacySettings"."visibleToReligions" IS NULL`));
+    }
+
     // Find all users with opposite gender, excluding the current user
-    // Filter by visibility: exclude 'hidden' profiles; only show 'public' or 'members' (default)
     const oppositeGenderUsers = await User.findAll({
-      where: exclusionFilter,
-      attributes: {
-        exclude: ['password'], // Exclude password from response
+      where: {
+        ...exclusionFilter,
+        [Op.and]: [
+          ...(exclusionFilter[Op.and] || []),
+          ...communityLiterals,
+        ],
       },
-      order: [['createdAt', 'DESC']], // Order by newest first
+      include: [
+        {
+          model: PrivacySettings,
+          as: 'privacySettings',
+          required: false,
+          where: privacyWhere,
+        },
+      ],
+      attributes: {
+        exclude: ['password'],
+      },
+      order: [['createdAt', 'DESC']],
     });
 
     // Now fetch BasicDetails separately and attach them
@@ -1721,16 +1839,46 @@ const searchProfiles = async (req, res) => {
     // Get blocked user IDs to exclude from search results
     const blockedIds = req.accountId ? await getBlockedAccountIds(req.accountId) : [];
 
+    // Fetch viewer's caste/religion for community-based visibility filtering
+    let viewerCaste = null;
+    let viewerReligion = null;
+    if (req.accountId) {
+      const viewerBasic = await BasicDetail.findOne({
+        where: { accountId: req.accountId },
+        attributes: ['caste', 'religion'],
+      });
+      viewerCaste = viewerBasic?.caste || null;
+      viewerReligion = viewerBasic?.religion || null;
+    }
+
     const whereClause = {
       id: { [Op.ne]: userId || 0 },
       isActive: true,
-      profileVisibility: {
-        [Op.or]: ['public', 'members', null], // Exclude hidden profiles
-      },
-      profilePaused: { [Op.or]: [false, null] }, // Exclude paused profiles
+      profilePaused: { [Op.or]: [false, null] },
     };
     if (blockedIds.length > 0) {
       whereClause.accountId = { [Op.notIn]: blockedIds };
+    }
+
+    // Community-based visibility literals
+    const searchCommunityLiterals = [];
+    if (viewerCaste) {
+      searchCommunityLiterals.push(
+        literal(`("privacySettings"."visibleToCastes" IS NULL OR "privacySettings"."visibleToCastes" @> '${JSON.stringify([viewerCaste])}'::jsonb)`)
+      );
+    } else {
+      searchCommunityLiterals.push(literal(`"privacySettings"."visibleToCastes" IS NULL`));
+    }
+    if (viewerReligion) {
+      searchCommunityLiterals.push(
+        literal(`("privacySettings"."visibleToReligions" IS NULL OR "privacySettings"."visibleToReligions" @> '${JSON.stringify([viewerReligion])}'::jsonb)`)
+      );
+    } else {
+      searchCommunityLiterals.push(literal(`"privacySettings"."visibleToReligions" IS NULL`));
+    }
+
+    if (searchCommunityLiterals.length > 0) {
+      whereClause[Op.and] = [...(whereClause[Op.and] || []), ...searchCommunityLiterals];
     }
 
     if (gender) {
@@ -1779,6 +1927,17 @@ const searchProfiles = async (req, res) => {
       hasHobbyFilter = true;
     }
 
+    // Privacy-based where clause for the PrivacySettings join
+    const searchPrivacyWhere = {
+      [Op.or]: [
+        { profileVisibility: { [Op.in]: ['public', 'members'] } },
+        { profileVisibility: null },
+      ],
+      [Op.and]: [
+        { [Op.or]: [{ hideFromSearch: false }, { hideFromSearch: null }] },
+      ],
+    };
+
     const users = await User.findAll({
       where: whereClause,
       include: [
@@ -1804,6 +1963,12 @@ const searchProfiles = async (req, res) => {
           as: 'hobby',
           where: hasHobbyFilter ? hobbyWhere : undefined,
           required: hasHobbyFilter
+        },
+        {
+          model: PrivacySettings,
+          as: 'privacySettings',
+          required: false,
+          where: searchPrivacyWhere,
         }
       ],
       order: [['createdAt', 'DESC']]

@@ -487,6 +487,210 @@ const connectDB = async () => {
       console.warn('[DB] CMS migration warning (non-fatal):', cmsMigrationErr.message);
     }
 
+    // Privacy settings table migration (idempotent)
+    try {
+      // Create ENUM types for privacy settings
+      await sequelize.query(`
+        DO $$ BEGIN
+          IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'enum_privacy_settings_profileVisibility') THEN
+            CREATE TYPE "enum_privacy_settings_profileVisibility" AS ENUM ('public', 'members', 'hidden');
+          END IF;
+          IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'enum_privacy_settings_showPhotosTo') THEN
+            CREATE TYPE "enum_privacy_settings_showPhotosTo" AS ENUM ('everyone', 'accepted_only', 'premium_only', 'nobody');
+          END IF;
+          IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'enum_privacy_settings_showPhone') THEN
+            CREATE TYPE "enum_privacy_settings_showPhone" AS ENUM ('everyone', 'accepted_only', 'premium_only', 'nobody');
+          END IF;
+          IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'enum_privacy_settings_showEmail') THEN
+            CREATE TYPE "enum_privacy_settings_showEmail" AS ENUM ('everyone', 'accepted_only', 'nobody');
+          END IF;
+        END$$;
+      `);
+
+      // Create privacy_settings table
+      await sequelize.query(`
+        CREATE TABLE IF NOT EXISTS privacy_settings (
+          id SERIAL PRIMARY KEY,
+          "accountId" UUID NOT NULL UNIQUE REFERENCES users("accountId") ON DELETE CASCADE,
+          "profileVisibility" "enum_privacy_settings_profileVisibility" DEFAULT 'members',
+          "showPhotosTo" "enum_privacy_settings_showPhotosTo" DEFAULT 'everyone',
+          "blurPhotos" BOOLEAN DEFAULT false,
+          "showPhone" "enum_privacy_settings_showPhone" DEFAULT 'accepted_only',
+          "showEmail" "enum_privacy_settings_showEmail" DEFAULT 'nobody',
+          "hideFromSearch" BOOLEAN DEFAULT false,
+          "hideLastSeen" BOOLEAN DEFAULT true,
+          "hideOnlineStatus" BOOLEAN DEFAULT true,
+          "visibleToCastes" JSONB DEFAULT NULL,
+          "visibleToReligions" JSONB DEFAULT NULL,
+          "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+      `);
+
+      // Create index
+      await sequelize.query(`CREATE INDEX IF NOT EXISTS idx_privacy_settings_account ON privacy_settings ("accountId");`);
+
+      // Backfill: create default privacy_settings for existing users who don't have one
+      await sequelize.query(`
+        INSERT INTO privacy_settings ("accountId", "profileVisibility", "createdAt", "updatedAt")
+        SELECT u."accountId",
+               COALESCE(u."profileVisibility", 'members')::"enum_privacy_settings_profileVisibility",
+               NOW(), NOW()
+        FROM users u
+        WHERE u."accountId" NOT IN (SELECT "accountId" FROM privacy_settings)
+          AND u."deletedAt" IS NULL
+        ON CONFLICT ("accountId") DO NOTHING;
+      `);
+
+      console.log('[DB] Privacy settings migration applied');
+    } catch (privacyMigrationErr) {
+      console.warn('[DB] Privacy settings migration warning (non-fatal):', privacyMigrationErr.message);
+    }
+
+    // Legal & Compliance migration (consent_logs table + user columns) — idempotent
+    try {
+      // Add accepted_terms columns to users table
+      await sequelize.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS "acceptedTermsAt" TIMESTAMPTZ;`);
+      await sequelize.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS "acceptedTermsVersion" VARCHAR(50);`);
+
+      // Create ENUM types for consent_logs
+      await sequelize.query(`
+        DO $$
+        BEGIN
+          IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'enum_consent_logs_action') THEN
+            CREATE TYPE "enum_consent_logs_action" AS ENUM ('grant', 'withdraw');
+          END IF;
+          IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'enum_consent_logs_policyType') THEN
+            CREATE TYPE "enum_consent_logs_policyType" AS ENUM ('terms', 'privacy', 'all');
+          END IF;
+        END$$;
+      `);
+
+      // Create consent_logs table
+      await sequelize.query(`
+        CREATE TABLE IF NOT EXISTS consent_logs (
+          id SERIAL PRIMARY KEY,
+          "accountId" UUID NOT NULL REFERENCES users("accountId") ON DELETE CASCADE,
+          action "enum_consent_logs_action" NOT NULL,
+          "policyType" "enum_consent_logs_policyType" NOT NULL,
+          "policyVersion" VARCHAR(50) NOT NULL DEFAULT '1.0',
+          "ipAddress" VARCHAR(45),
+          "userAgent" VARCHAR(500),
+          metadata JSONB,
+          "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+      `);
+
+      // Indexes
+      await sequelize.query(`CREATE INDEX IF NOT EXISTS idx_consent_logs_account ON consent_logs ("accountId");`);
+      await sequelize.query(`CREATE INDEX IF NOT EXISTS idx_consent_logs_action ON consent_logs (action);`);
+      await sequelize.query(`CREATE INDEX IF NOT EXISTS idx_consent_logs_policy_type ON consent_logs ("policyType");`);
+      await sequelize.query(`CREATE INDEX IF NOT EXISTS idx_consent_logs_created ON consent_logs ("createdAt");`);
+
+      // Seed default Privacy Policy and Terms of Service CMS pages (idempotent)
+      await sequelize.query(`
+        INSERT INTO page_contents (slug, title, content, "metaDescription", "isPublished", "createdAt", "updatedAt")
+        VALUES
+          ('privacy-policy', 'Privacy Policy', '<h2>Privacy Policy</h2>
+<p><strong>Effective Date:</strong> February 16, 2026 &nbsp;|&nbsp; <strong>Version:</strong> 1.0</p>
+<p>Namma Naidu Matrimony (&ldquo;we&rdquo;, &ldquo;us&rdquo;, or &ldquo;our&rdquo;) is committed to protecting your personal data in accordance with the <strong>Digital Personal Data Protection Act, 2023 (DPDP Act)</strong> and applicable Indian laws.</p>
+
+<h3>1. Data We Collect</h3>
+<ul>
+<li><strong>Identity data:</strong> name, gender, date of birth, photos.</li>
+<li><strong>Contact data:</strong> phone number, email address.</li>
+<li><strong>Profile data:</strong> religion, caste, education, occupation, family details, horoscope, partner preferences.</li>
+<li><strong>Usage data:</strong> device info, IP address, app interactions, timestamps.</li>
+<li><strong>Payment data:</strong> transaction IDs processed by our payment gateway (we do not store card numbers).</li>
+</ul>
+
+<h3>2. Purpose of Processing</h3>
+<p>We process your data solely to provide matrimony matchmaking services, communicate with you, improve our platform, and comply with legal obligations.</p>
+
+<h3>3. Consent</h3>
+<p>By registering on our platform and accepting this Privacy Policy, you provide <strong>free, specific, informed, unconditional, and unambiguous</strong> consent to the collection and processing of your personal data as described herein (Section 6, DPDP Act 2023).</p>
+
+<h3>4. Data Sharing</h3>
+<p>Your profile information is visible to other registered members as per your privacy settings. We do not sell your personal data. We may share data with: (a) payment processors, (b) cloud hosting providers, (c) law enforcement when required by law.</p>
+
+<h3>5. Data Retention</h3>
+<p>Your data is retained as long as your account is active. Upon account deletion, we erase your personal data within 30 days, except where retention is required by law.</p>
+
+<h3>6. Your Rights (DPDP Act 2023)</h3>
+<ul>
+<li><strong>Right to access</strong> &ndash; Request a summary of your personal data we hold.</li>
+<li><strong>Right to correction</strong> &ndash; Update inaccurate or incomplete data via your profile settings.</li>
+<li><strong>Right to erasure</strong> &ndash; Delete your account and all associated personal data.</li>
+<li><strong>Right to withdraw consent</strong> &ndash; Withdraw consent at any time via Profile Settings &rarr; Legal &amp; Compliance. Withdrawal may result in account deactivation.</li>
+<li><strong>Right to grievance redressal</strong> &ndash; Contact our Grievance Officer (see below).</li>
+<li><strong>Right to nominate</strong> &ndash; Nominate a person to exercise your rights in case of death or incapacity.</li>
+</ul>
+
+<h3>7. Data Security</h3>
+<p>We employ industry-standard encryption (TLS/SSL), hashed passwords (bcrypt), and access controls to protect your data.</p>
+
+<h3>8. Grievance Officer</h3>
+<p>Name: Namma Naidu Grievance Officer<br/>Email: grievance@nammanaidu.com<br/>Response time: Within 72 hours of receipt.</p>
+
+<h3>9. Changes to This Policy</h3>
+<p>We may update this policy periodically. If changes are material, we will notify you via email or in-app notification and request re-consent where required.</p>',
+          'Privacy Policy for Namma Naidu Matrimony — DPDP Act 2023 compliant.', true, NOW(), NOW()),
+
+          ('terms-of-use', 'Terms & Conditions', '<h2>Terms &amp; Conditions</h2>
+<p><strong>Effective Date:</strong> February 16, 2026 &nbsp;|&nbsp; <strong>Version:</strong> 1.0</p>
+<p>Welcome to Namma Naidu Matrimony. By registering or using our services, you agree to be bound by these Terms &amp; Conditions.</p>
+
+<h3>1. Eligibility</h3>
+<ul>
+<li>You must be at least 18 years of age (21 for male users intending to marry).</li>
+<li>You must be legally competent to enter into a contract under the Indian Contract Act, 1872.</li>
+<li>You must not be a married person (unless legally separated / divorced).</li>
+</ul>
+
+<h3>2. Account Registration</h3>
+<p>You agree to provide accurate, current, and complete information. You are responsible for maintaining the confidentiality of your login credentials.</p>
+
+<h3>3. Acceptable Use</h3>
+<p>You shall not: (a) post false or misleading information, (b) harass or abuse other members, (c) use the platform for commercial purposes, (d) scrape or data-mine the platform, (e) impersonate another person.</p>
+
+<h3>4. Profile Verification</h3>
+<p>We reserve the right to verify profiles, request documents, and reject or remove profiles that violate our policies.</p>
+
+<h3>5. Subscription &amp; Payments</h3>
+<p>Some features require a paid subscription. All payments are processed securely via Razorpay. Refund policies are governed by our Refund Policy.</p>
+
+<h3>6. Privacy &amp; Data Protection</h3>
+<p>Your use of the platform is also governed by our <a href="/privacy-policy">Privacy Policy</a>, which complies with the DPDP Act, 2023.</p>
+
+<h3>7. Content Ownership</h3>
+<p>You retain ownership of content you upload. By uploading, you grant us a non-exclusive license to display it on the platform for matchmaking purposes.</p>
+
+<h3>8. Limitation of Liability</h3>
+<p>Namma Naidu Matrimony acts as an intermediary platform. We are not responsible for the conduct of any member, the accuracy of profiles, or any outcomes resulting from interactions on the platform.</p>
+
+<h3>9. Termination</h3>
+<p>We may suspend or terminate your account if you violate these Terms. You may delete your account at any time via Profile Settings.</p>
+
+<h3>10. Governing Law</h3>
+<p>These Terms are governed by the laws of India. Any disputes shall be subject to the exclusive jurisdiction of the courts in Hyderabad, Telangana.</p>
+
+<h3>11. Consent Withdrawal</h3>
+<p>Under the DPDP Act 2023, you have the right to withdraw your consent to data processing at any time. You can do so via Profile Settings &rarr; Legal &amp; Compliance. Please note that withdrawing consent may result in the deactivation of your account.</p>
+
+<h3>12. Changes to Terms</h3>
+<p>We reserve the right to modify these Terms. Material changes will be communicated via email or in-app notification.</p>
+
+<h3>13. Contact</h3>
+<p>For queries, contact us at: support@nammanaidu.com</p>',
+          'Terms and Conditions for Namma Naidu Matrimony.', true, NOW(), NOW())
+        ON CONFLICT (slug) DO NOTHING;
+      `);
+
+      console.log('[DB] Legal & Compliance migration applied');
+    } catch (legalMigrationErr) {
+      console.warn('[DB] Legal migration warning (non-fatal):', legalMigrationErr.message);
+    }
+
     // Seed default admin users (idempotent — skips if email already exists)
     try {
       const adminSeeds = [

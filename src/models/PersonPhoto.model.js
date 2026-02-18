@@ -68,6 +68,31 @@ const PersonPhoto = sequelize.define(
       defaultValue: false,
       comment: 'Whether admin has verified the face matches proof image',
     },
+    photo1Hash: {
+      type: DataTypes.STRING(64),
+      allowNull: true,
+      comment: 'Perceptual hash of photo1 for duplicate detection',
+    },
+    photo2Hash: {
+      type: DataTypes.STRING(64),
+      allowNull: true,
+      comment: 'Perceptual hash of photo2 for duplicate detection',
+    },
+    photo3Hash: {
+      type: DataTypes.STRING(64),
+      allowNull: true,
+      comment: 'Perceptual hash of photo3 for duplicate detection',
+    },
+    photo4Hash: {
+      type: DataTypes.STRING(64),
+      allowNull: true,
+      comment: 'Perceptual hash of photo4 for duplicate detection',
+    },
+    photo5Hash: {
+      type: DataTypes.STRING(64),
+      allowNull: true,
+      comment: 'Perceptual hash of photo5 for duplicate detection',
+    },
   },
   {
     tableName: 'person_photos',

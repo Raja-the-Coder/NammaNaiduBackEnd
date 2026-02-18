@@ -317,7 +317,7 @@ const updateUser = async (req, res) => {
   }
 };
 
-// Delete user
+// Soft delete user (sets deletedAt, paranoid mode)
 const deleteUser = async (req, res) => {
   try {
     const { id } = req.params;
@@ -330,13 +330,150 @@ const deleteUser = async (req, res) => {
       });
     }
 
+    // With paranoid: true on the model, destroy() sets deletedAt instead of hard deleting
     await user.destroy();
 
     res.json({
       success: true,
-      message: 'User deleted successfully',
+      message: 'User soft deleted successfully. Can be restored within 30 days.',
     });
   } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+// Get soft-deleted users
+const getDeletedUsers = async (req, res) => {
+  try {
+    const { search, page = 1, limit = 20 } = req.query;
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+
+    const whereClause = {
+      deletedAt: { [Op.ne]: null },
+    };
+
+    if (search) {
+      whereClause[Op.or] = [
+        { name: { [Op.iLike]: `%${search}%` } },
+        { email: { [Op.iLike]: `%${search}%` } },
+        { phone: { [Op.iLike]: `%${search}%` } },
+        { userCode: { [Op.iLike]: `%${search}%` } },
+      ];
+    }
+
+    const { count, rows } = await User.findAndCountAll({
+      where: whereClause,
+      paranoid: false, // Include soft-deleted records
+      include: [
+        {
+          model: BasicDetail,
+          as: 'basicDetail',
+          required: false,
+        },
+      ],
+      order: [['deletedAt', 'DESC']],
+      limit: parseInt(limit),
+      offset,
+    });
+
+    // Only return actually deleted users
+    const deletedRows = rows.filter(u => u.deletedAt !== null);
+
+    const formattedUsers = deletedRows.map((user) => {
+      const userData = user.toJSON();
+      return {
+        id: userData.id,
+        accountId: userData.accountId,
+        userCode: userData.userCode,
+        name: userData.name,
+        email: userData.email,
+        phone: userData.phone,
+        gender: userData.gender,
+        deletedAt: userData.deletedAt,
+        createdAt: userData.createdAt,
+      };
+    });
+
+    res.json({
+      success: true,
+      message: 'Deleted users retrieved successfully',
+      data: formattedUsers,
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages: Math.ceil(count / parseInt(limit)),
+        totalItems: count,
+        itemsPerPage: parseInt(limit),
+      },
+    });
+  } catch (error) {
+    console.error('[getDeletedUsers] Error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to fetch deleted users',
+    });
+  }
+};
+
+// Restore a soft-deleted user
+const restoreUser = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const user = await User.findByPk(id, { paranoid: false });
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+      });
+    }
+
+    if (!user.deletedAt) {
+      return res.status(400).json({
+        success: false,
+        message: 'User is not deleted',
+      });
+    }
+
+    await user.restore();
+
+    res.json({
+      success: true,
+      message: 'User restored successfully',
+      data: { id: user.id, name: user.name, accountId: user.accountId },
+    });
+  } catch (error) {
+    console.error('[restoreUser] Error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+// Permanently delete a user (hard delete — irreversible)
+const permanentDeleteUser = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const user = await User.findByPk(id, { paranoid: false });
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+      });
+    }
+
+    await user.destroy({ force: true });
+
+    res.json({
+      success: true,
+      message: 'User permanently deleted. This action cannot be undone.',
+    });
+  } catch (error) {
+    console.error('[permanentDeleteUser] Error:', error);
     res.status(500).json({
       success: false,
       message: error.message,
@@ -722,6 +859,9 @@ module.exports = {
   updateUser,
   updateUserStatus,
   deleteUser,
+  getDeletedUsers,
+  restoreUser,
+  permanentDeleteUser,
   getPendingApprovals,
   approvePendingItem,
   rejectPendingItem,

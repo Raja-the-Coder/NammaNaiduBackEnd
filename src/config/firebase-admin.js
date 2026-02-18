@@ -69,7 +69,7 @@ const initializeFirebaseAdmin = () => {
       // Try standard paths for local development
       const possiblePaths = [
         path.join(__dirname, 'firebase-service-account.json'),
-        path.resolve(process.cwd(), 'src/config/nammamatrimonyapp-firebase-adminsdk-fbsvc-43d0c67ff2.json'),
+        path.resolve(process.cwd(), 'src/config/nammanaidu-cloud-firebase-adminsdk.json'),
       ];
 
       let serviceAccountPath = null;

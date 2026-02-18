@@ -1,7 +1,8 @@
 const UserReport = require('../../models/UserReport.model');
 const UserBlock = require('../../models/UserBlock.model');
 const User = require('../../models/User.model');
-const { Op } = require('sequelize');
+const { Op, fn, col, literal } = require('sequelize');
+const { sequelize } = require('../../config/database');
 
 // ─── List all user reports (with filters + pagination) ────────────────────────
 const getReports = async (req, res) => {
@@ -270,6 +271,145 @@ const getAbuseStats = async (req, res) => {
   }
 };
 
+// ─── Enhanced auto-flagged stats ─────────────────────────────────────────────
+const getAutoFlaggedStats = async (req, res) => {
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+    const [
+      totalFlagged,
+      flaggedToday,
+      totalBlocked,
+      reasonBreakdown,
+      repeatOffenders,
+    ] = await Promise.all([
+      // Total currently flagged
+      User.count({ where: { isFlagged: true } }),
+      // Flagged today (approximation: flagged users updated today)
+      User.count({
+        where: {
+          isFlagged: true,
+          updatedAt: { [Op.gte]: today },
+        },
+      }),
+      // Total auto-blocked (inactive + flagged)
+      User.count({
+        where: { isActive: false, isFlagged: true },
+      }),
+      // Report reason breakdown
+      UserReport.findAll({
+        attributes: ['reason', [fn('COUNT', col('id')), 'count']],
+        group: ['reason'],
+        order: [[fn('COUNT', col('id')), 'DESC']],
+        raw: true,
+      }),
+      // Repeat offenders (3+ reports in last 7 days)
+      UserReport.findAll({
+        attributes: [
+          'reportedAccountId',
+          [fn('COUNT', col('id')), 'reportCount'],
+        ],
+        where: { createdAt: { [Op.gte]: weekAgo } },
+        group: ['reportedAccountId'],
+        having: literal('COUNT(id) >= 3'),
+        order: [[fn('COUNT', col('id')), 'DESC']],
+        limit: 20,
+        raw: true,
+      }),
+    ]);
+
+    return res.json({
+      success: true,
+      data: {
+        totalFlagged,
+        flaggedToday,
+        totalBlocked,
+        reasonBreakdown,
+        repeatOffenders,
+      },
+    });
+  } catch (error) {
+    console.error('Error fetching auto-flagged stats:', error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// ─── Bulk review flagged users ───────────────────────────────────────────────
+const bulkReviewFlagged = async (req, res) => {
+  try {
+    const { accountIds, action, adminNotes } = req.body;
+
+    if (!Array.isArray(accountIds) || accountIds.length === 0) {
+      return res.status(400).json({ success: false, message: 'accountIds array is required' });
+    }
+    if (!['clear', 'warn', 'block'].includes(action)) {
+      return res.status(400).json({ success: false, message: 'action must be clear, warn, or block' });
+    }
+
+    const results = { processed: 0, failed: 0 };
+
+    await sequelize.transaction(async (t) => {
+      for (const accountId of accountIds) {
+        try {
+          const user = await User.findOne({ where: { accountId }, transaction: t });
+          if (!user) {
+            results.failed++;
+            continue;
+          }
+
+          const updateFields = {};
+          switch (action) {
+            case 'clear':
+              updateFields.isFlagged = false;
+              updateFields.flagReason = null;
+              break;
+            case 'warn':
+              updateFields.isFlagged = false;
+              updateFields.flagReason = `Warned by admin (bulk) on ${new Date().toISOString()}`;
+              break;
+            case 'block':
+              updateFields.isActive = false;
+              updateFields.isFlagged = false;
+              updateFields.flagReason = `Blocked by admin (bulk) on ${new Date().toISOString()}`;
+              break;
+          }
+
+          await user.update(updateFields, { transaction: t });
+
+          // Update pending reports
+          if (action === 'block' || action === 'warn') {
+            await UserReport.update(
+              {
+                status: 'action_taken',
+                actionTaken: action === 'block' ? 'blocked' : 'warned',
+                adminNotes: adminNotes || null,
+                reviewedBy: req.adminId,
+                reviewedAt: new Date(),
+              },
+              { where: { reportedAccountId: accountId, status: 'pending' }, transaction: t }
+            );
+          }
+
+          results.processed++;
+        } catch (err) {
+          results.failed++;
+        }
+      }
+    });
+
+    return res.json({
+      success: true,
+      message: `Bulk ${action}: ${results.processed} processed, ${results.failed} failed`,
+      data: results,
+    });
+  } catch (error) {
+    console.error('Error in bulk review:', error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getReports,
   getReportDetail,
@@ -278,4 +418,6 @@ module.exports = {
   reviewFlaggedUser,
   getBlocksList,
   getAbuseStats,
+  getAutoFlaggedStats,
+  bulkReviewFlagged,
 };

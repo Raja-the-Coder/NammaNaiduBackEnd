@@ -6,6 +6,9 @@ const {
   updateUser,
   updateUserStatus,
   deleteUser,
+  getDeletedUsers,
+  restoreUser,
+  permanentDeleteUser,
   getPendingApprovals,
   approvePendingItem,
   rejectPendingItem,
@@ -64,6 +67,25 @@ router.post(
 
 // Get blocked users
 router.get('/users/blocked', getBlockedUsers);
+
+// Soft-deleted users management
+router.get('/users/deleted', getDeletedUsers);
+router.post(
+  '/users/:id/restore',
+  [
+    param('id').isInt().withMessage('User ID must be an integer'),
+    validate,
+  ],
+  restoreUser
+);
+router.delete(
+  '/users/:id/permanent',
+  [
+    param('id').isInt().withMessage('User ID must be an integer'),
+    validate,
+  ],
+  permanentDeleteUser
+);
 
 // Get user by ID
 router.get('/users/:id', getUserById);

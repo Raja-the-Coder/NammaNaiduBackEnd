@@ -29,7 +29,11 @@ const deviceRoutes = require('./modules/devices/device.routes');
 const messageRoutes = require('./modules/messages/message.routes');
 const chatRoutes = require('./modules/chat/chat.routes');
 const safetyRoutes = require('./modules/users/safety.routes');
+const privacyRoutes = require('./modules/users/privacy.routes');
+const legalRoutes = require('./modules/users/legal.routes');
 const adminSafetyRoutes = require('./modules/admin/safetyAdmin.routes');
+const adminSuspiciousRoutes = require('./modules/admin/suspiciousBehavior.routes');
+const adminPhotoDuplicateRoutes = require('./modules/admin/photoDuplicate.routes');
 const adminCmsRoutes = require('./modules/admin/cms.routes');
 const publicCmsRoutes = require('./modules/public/publicCms.routes');
 const errorHandler = require('./middleware/error.middleware');
@@ -73,6 +77,8 @@ app.use('/api/admin', adminReferralRoutes);
 app.use('/api/admin', adminSettingsRoutes);
 app.use('/api/admin', adminChatRoutes);
 app.use('/api/admin', adminSafetyRoutes);
+app.use('/api/admin', adminSuspiciousRoutes);
+app.use('/api/admin', adminPhotoDuplicateRoutes);
 app.use('/api/admin', adminUserRoutes);
 app.use('/api/admin', adminUserManagementRoutes); // Admin user management routes (must come before master routes)
 app.use('/api/admin', photoModerationRoutes);
@@ -84,6 +90,8 @@ app.use('/api/devices', deviceRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/users', safetyRoutes);
+app.use('/api/users', privacyRoutes);
+app.use('/api/users', legalRoutes);
 
 // CMS routes
 app.use('/api/admin', adminCmsRoutes);

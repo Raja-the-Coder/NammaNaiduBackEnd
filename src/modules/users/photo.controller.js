@@ -1,6 +1,8 @@
 const PersonPhoto = require('../../models/PersonPhoto.model');
 const { uploadBase64Image, deleteImage, extractPublicId } = require('../../services/cloudinary.service');
 const { successResponse, errorResponse } = require('../../utils/response');
+const { computePerceptualHash, findDuplicates } = require('../../services/photoHash.service');
+const { canViewPhotos } = require('../../services/privacyCheck.service');
 
 /**
  * Upload person photos and proof image
@@ -76,10 +78,37 @@ const uploadPersonPhotos = async (req, res) => {
       }
     }
 
+    // Compute perceptual hashes for uploaded photos (async, non-blocking for the response)
+    const photoHashes = {};
+    for (const photo of personphoto) {
+      try {
+        // Convert base64 to buffer for hashing
+        const base64Data = photo.photobase64.replace(/^data:image\/\w+;base64,/, '');
+        const imageBuffer = Buffer.from(base64Data, 'base64');
+        const hash = await computePerceptualHash(imageBuffer);
+        if (hash) {
+          photoHashes[`photo${photo.photoplacement}Hash`] = hash;
+
+          // Check for duplicates across other accounts (non-blocking, just flag)
+          try {
+            const dupes = await findDuplicates(hash, personid, 5);
+            if (dupes.length > 0) {
+              console.warn(`[PhotoHash] Potential duplicate detected for ${personid} photo${photo.photoplacement}:`, dupes.map(d => `${d.personId}:${d.similarity}%`));
+            }
+          } catch (dupeErr) {
+            console.error('[PhotoHash] Duplicate check error:', dupeErr.message);
+          }
+        }
+      } catch (hashErr) {
+        console.error(`[PhotoHash] Error hashing photo${photo.photoplacement}:`, hashErr.message);
+      }
+    }
+
     // Prepare database update/create data
     const photoData = {
       personId: personid,
       proofImage: proofLink,
+      ...photoHashes,
     };
 
     // Map photoplacement to photo fields (photo1, photo2, etc.)
@@ -157,6 +186,13 @@ const getPersonPhotos = async (req, res) => {
       });
     }
 
+    // Check photo privacy: personId is the target user's accountId
+    const viewerAccountId = req.accountId;
+    let photoPrivacy = { allowed: true, blurred: false, reason: null };
+    if (viewerAccountId && viewerAccountId !== personId) {
+      photoPrivacy = await canViewPhotos(viewerAccountId, personId);
+    }
+
     // Format response
     const responsePhotos = [];
     for (let i = 1; i <= 5; i++) {
@@ -164,7 +200,8 @@ const getPersonPhotos = async (req, res) => {
       if (photoUrl) {
         responsePhotos.push({
           photoplacement: i,
-          [`photo${i}link`]: photoUrl,
+          [`photo${i}link`]: photoPrivacy.allowed ? photoUrl : null,
+          isBlurred: photoPrivacy.blurred,
         });
       }
     }
@@ -176,6 +213,11 @@ const getPersonPhotos = async (req, res) => {
       primaryPhoto: personPhoto.primaryPhoto || 1,
       photoOrder: personPhoto.photoOrder || '1,2,3,4,5',
       faceVerified: personPhoto.faceVerified || false,
+      photoPrivacy: {
+        photosAllowed: photoPrivacy.allowed,
+        isBlurred: photoPrivacy.blurred,
+        blurReason: photoPrivacy.reason,
+      },
     });
   } catch (error) {
     console.error('Error in getPersonPhotos:', error);

@@ -151,6 +151,16 @@ const User = sequelize.define(
       defaultValue: 0,
       comment: 'Cached profile completion percentage (0-100)',
     },
+    acceptedTermsAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      comment: 'Timestamp when user last accepted Terms & Privacy Policy',
+    },
+    acceptedTermsVersion: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+      comment: 'Semantic version of the policy the user last accepted (e.g. 1.0)',
+    },
     deletedAt: {
       type: DataTypes.DATE,
       allowNull: true,

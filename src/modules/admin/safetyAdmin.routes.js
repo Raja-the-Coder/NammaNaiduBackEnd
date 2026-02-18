@@ -8,6 +8,8 @@ const {
   reviewFlaggedUser,
   getBlocksList,
   getAbuseStats,
+  getAutoFlaggedStats,
+  bulkReviewFlagged,
 } = require('./safetyAdmin.controller');
 
 const router = express.Router();
@@ -21,6 +23,8 @@ router.put('/reports/:id', updateReport);
 // Flagged users
 router.get('/flagged-users', getFlaggedUsers);
 router.put('/flagged-users/:accountId', reviewFlaggedUser);
+router.get('/flagged-stats', getAutoFlaggedStats);
+router.post('/flagged-users/bulk-review', bulkReviewFlagged);
 
 // Blocks
 router.get('/blocks', getBlocksList);
