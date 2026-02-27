@@ -104,6 +104,51 @@ const uploadMultipleBase64Images = async (images) => {
 };
 
 /**
+ * Upload base64 video to Cloudinary
+ * @param {string} base64String - Base64 encoded video string (with or without data URI prefix)
+ * @param {string} folder - Cloudinary folder path
+ * @param {string} publicId - Optional public ID for the video
+ * @returns {Promise<{url: string, publicId: string}>}
+ */
+const uploadBase64Video = async (base64String, folder = 'nammanaidu/whatsapp', publicId = null) => {
+  try {
+    const base64Data = base64String.replace(/^data:video\/\w+;base64,/, '');
+    const buffer = Buffer.from(base64Data, 'base64');
+    const stream = Readable.from(buffer);
+
+    const uploadOptions = {
+      folder,
+      resource_type: 'video',
+      overwrite: true,
+    };
+
+    if (publicId) {
+      uploadOptions.public_id = publicId;
+    }
+
+    return new Promise((resolve, reject) => {
+      const uploadStream = cloudinary.uploader.upload_stream(
+        uploadOptions,
+        (error, result) => {
+          if (error) {
+            reject(error);
+          } else {
+            resolve({
+              url: result.secure_url,
+              publicId: result.public_id,
+            });
+          }
+        }
+      );
+
+      stream.pipe(uploadStream);
+    });
+  } catch (error) {
+    throw new Error(`Failed to upload video to Cloudinary: ${error.message}`);
+  }
+};
+
+/**
  * Extract Cloudinary public_id from a secure URL
  * e.g. "https://res.cloudinary.com/xxx/image/upload/v123/nammanaidu/users/abc/photos/photo1-abc.jpg"
  * => "nammanaidu/users/abc/photos/photo1-abc"
@@ -128,6 +173,7 @@ const extractPublicId = (url) => {
 
 module.exports = {
   uploadBase64Image,
+  uploadBase64Video,
   deleteImage,
   uploadMultipleBase64Images,
   extractPublicId,

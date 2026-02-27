@@ -3,6 +3,8 @@ const SubscriptionTransaction = require('../../models/SubscriptionTransaction.mo
 const Notification = require('../../models/Notification.model');
 const DeviceToken = require('../../models/DeviceToken.model');
 const { sendPushNotificationToUser, sendPushNotificationToUsers } = require('../../services/push-notification.service');
+const { isWhatsAppConfigured, sendTextViaWhatsApp, sendImageViaWhatsApp, sendVideoViaWhatsApp } = require('../../services/whatsapp.service');
+const { uploadBase64Image, uploadBase64Video } = require('../../services/cloudinary.service');
 const { Op } = require('sequelize');
 
 /**
@@ -431,10 +433,136 @@ const getNotificationHistory = async (req, res) => {
   }
 };
 
+/**
+ * Upload media (image/video) for WhatsApp notification
+ * POST /api/admin/notifications/upload-media
+ */
+const uploadWhatsAppMedia = async (req, res) => {
+  try {
+    const { base64, mediaType } = req.body;
+
+    if (!base64) {
+      return res.status(400).json({ success: false, message: 'base64 data is required' });
+    }
+
+    if (!mediaType || !['image', 'video'].includes(mediaType)) {
+      return res.status(400).json({ success: false, message: 'mediaType must be "image" or "video"' });
+    }
+
+    let result;
+    if (mediaType === 'video') {
+      result = await uploadBase64Video(base64, 'nammanaidu/whatsapp');
+    } else {
+      result = await uploadBase64Image(base64, 'nammanaidu/whatsapp');
+    }
+
+    res.json({
+      success: true,
+      message: `${mediaType} uploaded successfully`,
+      data: { url: result.url, publicId: result.publicId },
+    });
+  } catch (error) {
+    console.error('Error uploading WhatsApp media:', error);
+    res.status(500).json({ success: false, message: 'Failed to upload media', error: error.message });
+  }
+};
+
+/**
+ * Send WhatsApp notification to users
+ * POST /api/admin/notifications/send-whatsapp
+ */
+const sendWhatsAppNotification = async (req, res) => {
+  try {
+    const { description, link, mediaUrl, mediaType, target, userIds } = req.body;
+
+    if (!description || !description.trim()) {
+      return res.status(400).json({ success: false, message: 'Description is required' });
+    }
+
+    if (!isWhatsAppConfigured()) {
+      return res.status(400).json({
+        success: false,
+        message: 'WhatsApp is not configured. Set META_WHATSAPP_TOKEN and META_PHONE_NUMBER_ID in .env',
+      });
+    }
+
+    if (!target || !['all', 'selected'].includes(target)) {
+      return res.status(400).json({ success: false, message: 'Target must be "all" or "selected"' });
+    }
+
+    if (target === 'selected' && (!userIds || !Array.isArray(userIds) || userIds.length === 0)) {
+      return res.status(400).json({ success: false, message: 'userIds array is required when target is "selected"' });
+    }
+
+    let targetUsers;
+    if (target === 'all') {
+      targetUsers = await User.findAll({
+        where: { isActive: true, role: 'user', phone: { [Op.ne]: null } },
+        attributes: ['accountId', 'phone', 'countryCode', 'name'],
+      });
+    } else {
+      targetUsers = await User.findAll({
+        where: { accountId: userIds, phone: { [Op.ne]: null } },
+        attributes: ['accountId', 'phone', 'countryCode', 'name'],
+      });
+    }
+
+    if (targetUsers.length === 0) {
+      return res.status(404).json({ success: false, message: 'No users with phone numbers found for the selected target' });
+    }
+
+    const caption = link ? `${description.trim()}\n\n${link}` : description.trim();
+
+    console.log(`\n📱 Sending WhatsApp notification to ${targetUsers.length} users`);
+    console.log(`   Description: "${description.substring(0, 80)}..."`);
+    console.log(`   Media: ${mediaType || 'none'}`);
+
+    let sentCount = 0;
+    let failedCount = 0;
+    const errors = [];
+
+    for (const user of targetUsers) {
+      const phone = `${user.countryCode || ''}${user.phone}`.replace(/^\+/, '');
+      try {
+        if (mediaUrl && mediaType === 'image') {
+          await sendImageViaWhatsApp(phone, mediaUrl, caption);
+        } else if (mediaUrl && mediaType === 'video') {
+          await sendVideoViaWhatsApp(phone, mediaUrl, caption);
+        } else {
+          await sendTextViaWhatsApp(phone, caption);
+        }
+        sentCount++;
+      } catch (err) {
+        failedCount++;
+        errors.push({ accountId: user.accountId, phone, error: err.message });
+        console.error(`   Failed for ${phone}: ${err.message}`);
+      }
+    }
+
+    console.log(`\n📊 WhatsApp send summary: sent=${sentCount}, failed=${failedCount}`);
+
+    res.json({
+      success: true,
+      message: `WhatsApp message sent to ${sentCount} of ${targetUsers.length} users`,
+      data: {
+        totalUsers: targetUsers.length,
+        sentCount,
+        failedCount,
+        ...(errors.length > 0 ? { errors: errors.slice(0, 10) } : {}),
+      },
+    });
+  } catch (error) {
+    console.error('Error sending WhatsApp notification:', error);
+    res.status(500).json({ success: false, message: 'Failed to send WhatsApp notification', error: error.message });
+  }
+};
+
 module.exports = {
   sendPushNotification,
   getNotificationStats,
   sendTopicPush,
   getQueueStats,
   getNotificationHistory,
+  uploadWhatsAppMedia,
+  sendWhatsAppNotification,
 };

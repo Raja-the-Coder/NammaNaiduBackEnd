@@ -12,11 +12,9 @@ const {
 const transporter = require('../../mailer');
 const { sendEmail } = require('../../services/email.service');
 const {
-  isMsg91Configured,
-  sendOtpViaMSG91,
-  verifyOtpViaMSG91,
-  resendOtpViaMSG91,
-} = require('../../services/sms.service');
+  isWhatsAppConfigured,
+  sendOtpViaWhatsApp,
+} = require('../../services/whatsapp.service');
 const PrivacySettings = require('../../models/PrivacySettings.model');
 const ConsentLog = require('../../models/ConsentLog.model');
 const { CURRENT_POLICY_VERSION } = require('../users/legal.controller');
@@ -370,12 +368,30 @@ const sendRegistrationOtp = async (req, res) => {
     });
     console.log('✅ OTP record upserted for', { phone, email: userEmail, expiresAt });
 
+    // Send OTP via WhatsApp
+    let whatsappSent = false;
+    try {
+      if (isWhatsAppConfigured()) {
+        await sendOtpViaWhatsApp(phone, otpCode);
+        whatsappSent = true;
+        console.log('✅ Registration OTP sent via WhatsApp to:', phone);
+      } else {
+        console.warn('⚠️  WhatsApp not configured. OTP stored in DB only.');
+      }
+    } catch (waError) {
+      console.error('❌ WhatsApp OTP send failed:', waError.message);
+    }
+
+    const isDev = process.env.NODE_ENV !== 'production';
+
     res.json({
       success: true,
-      message: 'OTP sent successfully',
+      message: whatsappSent ? 'OTP sent to your WhatsApp' : 'OTP generated (WhatsApp not configured)',
       data: {
-        otp: otpCode,
         expiresAt,
+        whatsappSent,
+        // Expose OTP in dev mode or when WhatsApp is not configured
+        ...((!whatsappSent || isDev) && { otp: otpCode }),
       },
     });
   } catch (error) {
@@ -618,8 +634,7 @@ const sendOtp = async (req, res) => {
         }
       }
     } else {
-      // ========== MOBILE OTP — TEMPORARY: MSG91 bypassed, DB-only ==========
-      // TODO: Re-enable MSG91 when SMS provider is fixed
+      // ========== MOBILE OTP — WhatsApp via Meta Cloud API ==========
       const [otpRecord, created] = await Otp.findOrCreate({
         where: { phone: mobileno },
         defaults: {
@@ -629,7 +644,7 @@ const sendOtp = async (req, res) => {
           expiresAt,
           attempts: 0,
           verified: false,
-          payload: { provider: 'none' },
+          payload: { provider: 'whatsapp_meta' },
         },
       });
 
@@ -638,12 +653,35 @@ const sendOtp = async (req, res) => {
         otpRecord.expiresAt = expiresAt;
         otpRecord.attempts = 0;
         otpRecord.verified = false;
-        otpRecord.payload = { provider: 'none' };
+        otpRecord.payload = { provider: 'whatsapp_meta' };
         await otpRecord.save();
       }
 
-      console.log('📱 [TEMPORARY] MSG91 bypassed. OTP stored in DB only.');
-      console.log('   Mobile:', mobileno, '| OTP:', otpCode);
+      // Send OTP via WhatsApp
+      try {
+        if (isWhatsAppConfigured()) {
+          const waResult = await sendOtpViaWhatsApp(mobileno, otpCode);
+          smsSent = true;
+          // Save messageId and delivery status to OTP record
+          otpRecord.whatsappMessageId = waResult.messageId || null;
+          otpRecord.deliveryStatus = 'sent';
+          otpRecord.deliveryError = null;
+          await otpRecord.save();
+          console.log('✅ WhatsApp OTP sent successfully to:', mobileno, '| MsgID:', waResult.messageId);
+        } else {
+          console.warn('⚠️  WhatsApp not configured. Set META_WHATSAPP_TOKEN and META_PHONE_NUMBER_ID in .env');
+          smsError = new Error('WhatsApp not configured');
+          otpRecord.deliveryStatus = 'failed';
+          otpRecord.deliveryError = 'WhatsApp not configured';
+          await otpRecord.save();
+        }
+      } catch (waError) {
+        smsError = waError;
+        otpRecord.deliveryStatus = 'failed';
+        otpRecord.deliveryError = waError.message;
+        await otpRecord.save();
+        console.error('❌ WhatsApp OTP send failed:', waError.message);
+      }
     }
 
     console.log('✅ OTP record processed for', { identifier, expiresAt });
@@ -654,7 +692,7 @@ const sendOtp = async (req, res) => {
     if (isemailid) {
       message = emailSent ? 'OTP sent successfully to your email.' : emailError ? 'OTP generated but email sending failed.' : 'OTP sent successfully.';
     } else {
-      message = smsSent ? 'OTP sent successfully to your mobile.' : smsError ? 'OTP generated but SMS sending failed.' : 'OTP sent successfully.';
+      message = smsSent ? 'OTP sent to your WhatsApp.' : smsError ? 'OTP generated but WhatsApp sending failed.' : 'OTP sent successfully.';
     }
 
     const data = {
@@ -662,9 +700,11 @@ const sendOtp = async (req, res) => {
       expiresAt: expiresAt.toISOString(),
     };
     if (isemailid) data.emailSent = !!emailSent;
-    if (!isemailid) data.smsSent = !!smsSent;
-    // TEMPORARY: Always expose OTP until MSG91 is fixed
-    data.otp = otpCode;
+    if (!isemailid) data.whatsappSent = !!smsSent;
+    // Only expose OTP in dev mode or if WhatsApp sending failed
+    if (isDev || (!isemailid && !smsSent) || (isemailid && !emailSent)) {
+      data.otp = otpCode;
+    }
 
     res.json({
       success: true,
@@ -786,35 +826,14 @@ const verifyOtp = async (req, res) => {
       return apiResponse(res, false, 'OTP has expired. Please request a new OTP.', null, 'OTP expired', 400);
     }
 
-    // --- Verify OTP ---
-    // Try MSG91 verification first for mobile (if MSG91 was used to send)
-    let verified = false;
-    if (!isemailid && isMsg91Configured() && otpRecord.payload?.provider === 'msg91') {
-      try {
-        const msg91Result = await verifyOtpViaMSG91(phone, otp);
-        verified = msg91Result.success;
-        if (!verified) {
-          // Increment attempts on failed verification
-          otpRecord.attempts = (otpRecord.attempts || 0) + 1;
-          await otpRecord.save();
-          return apiResponse(res, false, 'Invalid OTP', null, 'Invalid OTP', 400);
-        }
-      } catch (msg91Err) {
-        console.warn('⚠️  MSG91 verify failed, falling back to DB verification:', msg91Err.message);
-        // Fall through to DB-based verification
-      }
-    }
-
-    // Fallback: DB-based OTP verification using bcrypt compare
-    if (!verified) {
-      const otpMatch = await compareOtp(otp, otpRecord.code);
-      if (!otpMatch) {
-        // Increment attempts on failed verification
-        otpRecord.attempts = (otpRecord.attempts || 0) + 1;
-        await otpRecord.save();
-        const remaining = MAX_OTP_ATTEMPTS - otpRecord.attempts;
-        return apiResponse(res, false, `Invalid OTP. ${remaining > 0 ? remaining + ' attempts remaining.' : 'Please request a new OTP.'}`, null, 'Invalid OTP', 400);
-      }
+    // --- Verify OTP (DB-based bcrypt compare — works for WhatsApp & Email) ---
+    const otpMatch = await compareOtp(otp, otpRecord.code);
+    if (!otpMatch) {
+      // Increment attempts on failed verification
+      otpRecord.attempts = (otpRecord.attempts || 0) + 1;
+      await otpRecord.save();
+      const remaining = MAX_OTP_ATTEMPTS - otpRecord.attempts;
+      return apiResponse(res, false, `Invalid OTP. ${remaining > 0 ? remaining + ' attempts remaining.' : 'Please request a new OTP.'}`, null, 'Invalid OTP', 400);
     }
 
     otpRecord.verified = true;

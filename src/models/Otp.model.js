@@ -39,6 +39,22 @@ const Otp = sequelize.define(
       type: DataTypes.JSONB,
       allowNull: true,
     },
+    // ── WhatsApp Delivery Tracking ──────────────────────────────
+    whatsappMessageId: {
+      type: DataTypes.STRING,
+      allowNull: true,
+      comment: 'Meta WhatsApp message ID returned after sending OTP',
+    },
+    deliveryStatus: {
+      type: DataTypes.ENUM('pending', 'sent', 'delivered', 'read', 'failed'),
+      defaultValue: 'pending',
+      comment: 'WhatsApp delivery status updated via webhook',
+    },
+    deliveryError: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+      comment: 'Error message if WhatsApp delivery failed',
+    },
   },
   {
     tableName: 'otps',
@@ -47,5 +63,3 @@ const Otp = sequelize.define(
 );
 
 module.exports = Otp;
-
-

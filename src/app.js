@@ -36,6 +36,7 @@ const adminSuspiciousRoutes = require('./modules/admin/suspiciousBehavior.routes
 const adminPhotoDuplicateRoutes = require('./modules/admin/photoDuplicate.routes');
 const adminCmsRoutes = require('./modules/admin/cms.routes');
 const publicCmsRoutes = require('./modules/public/publicCms.routes');
+const whatsappRoutes = require('./modules/whatsapp/whatsapp.routes');
 const errorHandler = require('./middleware/error.middleware');
 const { apiLogger, errorLogger } = require('./middleware/apiLogger.middleware');
 
@@ -96,6 +97,9 @@ app.use('/api/users', legalRoutes);
 // CMS routes
 app.use('/api/admin', adminCmsRoutes);
 app.use('/api', publicCmsRoutes);
+
+// WhatsApp routes
+app.use('/api/whatsapp', whatsappRoutes);
 
 app.use((req, res) => {
   res.status(404).json({ message: 'Route not found' });

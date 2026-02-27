@@ -18,4 +18,10 @@ router.post('/send-push', authenticateAdmin, notificationController.sendPushNoti
 // Send push notification to an FCM topic (Admin only)
 router.post('/send-topic', authenticateAdmin, notificationController.sendTopicPush);
 
+// Upload media for WhatsApp notification (Admin only)
+router.post('/upload-media', authenticateAdmin, notificationController.uploadWhatsAppMedia);
+
+// Send WhatsApp notification to target users (Admin only)
+router.post('/send-whatsapp', authenticateAdmin, notificationController.sendWhatsAppNotification);
+
 module.exports = router;
