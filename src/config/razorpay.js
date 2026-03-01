@@ -1,9 +1,27 @@
 const Razorpay = require('razorpay');
 const crypto = require('crypto');
 
-const razorpayInstance = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID,
-  key_secret: process.env.RAZORPAY_KEY_SECRET,
+// Lazy-initialised — only created when Razorpay keys are present.
+// This prevents a startup crash when only PayU is configured.
+let _razorpayInstance = null;
+
+const getRazorpayInstance = () => {
+  if (_razorpayInstance) return _razorpayInstance;
+  if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
+    throw new Error('Razorpay is not configured. Set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET in .env');
+  }
+  _razorpayInstance = new Razorpay({
+    key_id: process.env.RAZORPAY_KEY_ID,
+    key_secret: process.env.RAZORPAY_KEY_SECRET,
+  });
+  return _razorpayInstance;
+};
+
+// Keep backward-compat export (throws if not configured)
+const razorpayInstance = new Proxy({}, {
+  get(_, prop) {
+    return getRazorpayInstance()[prop];
+  },
 });
 
 /**
@@ -21,7 +39,7 @@ const createOrder = async (amount, receipt, notes = {}) => {
     notes,
   };
 
-  const order = await razorpayInstance.orders.create(options);
+  const order = await getRazorpayInstance().orders.create(options);
   return order;
 };
 
@@ -48,7 +66,7 @@ const verifyPaymentSignature = (orderId, paymentId, signature) => {
  * @returns {Promise<object>} Payment details
  */
 const fetchPayment = async (paymentId) => {
-  return await razorpayInstance.payments.fetch(paymentId);
+  return await getRazorpayInstance().payments.fetch(paymentId);
 };
 
 /**
@@ -57,7 +75,7 @@ const fetchPayment = async (paymentId) => {
  * @returns {Promise<object>} Order details
  */
 const fetchOrder = async (orderId) => {
-  return await razorpayInstance.orders.fetch(orderId);
+  return await getRazorpayInstance().orders.fetch(orderId);
 };
 
 /**
@@ -71,7 +89,7 @@ const createRefund = async (paymentId, amount = null) => {
   if (amount) {
     options.amount = amount;
   }
-  return await razorpayInstance.payments.refund(paymentId, options);
+  return await getRazorpayInstance().payments.refund(paymentId, options);
 };
 
 module.exports = {
