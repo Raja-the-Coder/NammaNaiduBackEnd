@@ -13,7 +13,8 @@
     "migrate:family": "node migrations/run-family-migration.js",
     "migrate:hobbies": "node migrations/run-hobbies-migration.js",
     "migrate:last-login": "node migrations/run-last-login-migration.js",
-    "migrate:refresh-tokens": "node migrations/run-refresh-tokens-migration.js"
+    "migrate:refresh-tokens": "node migrations/run-refresh-tokens-migration.js",
+    "migrate:otp-whatsapp": "node migrations/run-otp-whatsapp-migration.js"
   },
   "keywords": [
     "nodejs",

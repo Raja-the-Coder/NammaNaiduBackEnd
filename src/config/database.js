@@ -151,6 +151,16 @@ const connectDB = async () => {
       console.warn('[DB] houseName migration warning (non-fatal):', houseNameMigrationErr.message);
     }
 
+    // OTP WhatsApp delivery tracking columns (idempotent)
+    try {
+      await sequelize.query(`ALTER TABLE otps ADD COLUMN IF NOT EXISTS "whatsappMessageId" VARCHAR(255);`);
+      await sequelize.query(`ALTER TABLE otps ADD COLUMN IF NOT EXISTS "deliveryStatus" VARCHAR(50) DEFAULT 'pending';`);
+      await sequelize.query(`ALTER TABLE otps ADD COLUMN IF NOT EXISTS "deliveryError" TEXT;`);
+      console.log('[DB] OTP WhatsApp delivery columns migration applied');
+    } catch (otpWaMigrationErr) {
+      console.warn('[DB] OTP WhatsApp migration warning (non-fatal):', otpWaMigrationErr.message);
+    }
+
     // Notification preferences & queue tables migration (idempotent)
     try {
       // Create batchMode enum if it doesn't exist
