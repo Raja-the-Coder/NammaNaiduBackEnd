@@ -8,6 +8,10 @@ const {
     verifyRazorpayPayment,
     handlePaymentFailed,
     getUserTransactions,
+    createPayUOrder,
+    verifyPayUPayment,
+    generatePayUMobileHash,
+    handlePayUFailed,
 } = require('./subscription.controller');
 const { applyCoupon } = require('./coupon.controller');
 const { getReferralInfo, applyReferralCode } = require('./referral.controller');
@@ -60,6 +64,48 @@ router.get(
         validate,
     ],
     getUserTransactions
+);
+
+// ── PayU Payment Flow ──
+router.post(
+    '/payu/create-order',
+    [
+        body('planId').isInt().withMessage('Plan ID must be an integer'),
+        body('couponCode').optional().trim(),
+        validate,
+    ],
+    createPayUOrder
+);
+
+router.post(
+    '/payu/verify-payment',
+    [
+        body('txnid').trim().notEmpty().withMessage('txnid is required'),
+        body('mihpayid').trim().notEmpty().withMessage('mihpayid is required'),
+        body('status').trim().notEmpty().withMessage('status is required'),
+        body('hash').trim().notEmpty().withMessage('hash is required'),
+        validate,
+    ],
+    verifyPayUPayment
+);
+
+router.post(
+    '/payu/generate-hash',
+    [
+        body('hashName').trim().notEmpty().withMessage('hashName is required'),
+        body('hashString').trim().notEmpty().withMessage('hashString is required'),
+        validate,
+    ],
+    generatePayUMobileHash
+);
+
+router.post(
+    '/payu/payment-failed',
+    [
+        body('txnid').trim().notEmpty().withMessage('txnid is required'),
+        validate,
+    ],
+    handlePayUFailed
 );
 
 // ── Coupons ──
