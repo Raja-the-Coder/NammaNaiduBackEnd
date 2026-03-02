@@ -4,9 +4,6 @@ const { authenticate } = require('../../middleware/auth.middleware');
 const { validate } = require('../../middleware/validation.middleware');
 const {
     getSubscriptionStatus,
-    createRazorpayOrder,
-    verifyRazorpayPayment,
-    handlePaymentFailed,
     getUserTransactions,
     createPayUOrder,
     verifyPayUPayment,
@@ -23,37 +20,6 @@ router.use(authenticate);
 
 // ── Subscription Status ──
 router.get('/status', getSubscriptionStatus);
-
-// ── Razorpay Payment Flow ──
-router.post(
-    '/create-order',
-    [
-        body('planId').isInt().withMessage('Plan ID must be an integer'),
-        body('couponCode').optional().trim(),
-        validate,
-    ],
-    createRazorpayOrder
-);
-
-router.post(
-    '/verify-payment',
-    [
-        body('razorpay_order_id').trim().notEmpty().withMessage('Razorpay order ID is required'),
-        body('razorpay_payment_id').trim().notEmpty().withMessage('Razorpay payment ID is required'),
-        body('razorpay_signature').trim().notEmpty().withMessage('Razorpay signature is required'),
-        validate,
-    ],
-    verifyRazorpayPayment
-);
-
-router.post(
-    '/payment-failed',
-    [
-        body('razorpay_order_id').trim().notEmpty().withMessage('Razorpay order ID is required'),
-        validate,
-    ],
-    handlePaymentFailed
-);
 
 // ── Transaction History ──
 router.get(

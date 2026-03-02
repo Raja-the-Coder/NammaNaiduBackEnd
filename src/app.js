@@ -12,7 +12,6 @@ const masterRoutes = require('./modules/admin/master.routes');
 const subscriptionRoutes = require('./modules/admin/subscription.routes');
 const userSubscriptionRoutes = require('./modules/subscription/subscription.routes');
 const publicSubscriptionRoutes = require('./modules/subscription/subscription.public.routes');
-const webhookRoutes = require('./modules/subscription/webhook.routes');
 const publicMasterRoutes = require('./modules/master/master.public.routes');
 const adminUserRoutes = require('./modules/admin/adminUser.routes');
 const adminUserManagementRoutes = require('./modules/admin/user.routes');
@@ -66,8 +65,6 @@ app.use('/api', publicSubscriptionRoutes);
 app.use('/api', publicMasterRoutes);
 // Public settings route (no auth)
 app.get('/api/settings/referral', getReferralSettings);
-// Razorpay webhook (no auth, validated by signature)
-app.use('/api/subscription', webhookRoutes);
 // Authenticated User Subscription routes
 app.use('/api/subscription', userSubscriptionRoutes);
 
