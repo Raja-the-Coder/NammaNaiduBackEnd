@@ -189,68 +189,44 @@ const broadcastMessage = async (req, res) => {
 };
 
 // ─────────────────────────────────────────────
-// 4a. Webhook GET — Meta Verification Challenge
+// 4a. Webhook GET — No-op (Fast2SMS does not require verification challenge)
 // GET /api/whatsapp/webhook
 // ─────────────────────────────────────────────
 
 const handleWebhookGet = (req, res) => {
-  const mode      = req.query['hub.mode'];
-  const token     = req.query['hub.verify_token'];
-  const challenge = req.query['hub.challenge'];
-  const verifyToken = process.env.META_WEBHOOK_VERIFY_TOKEN || 'nammanaidu_whatsapp_webhook';
-
-  console.log('📨 Webhook verification request received:', { mode, token, challenge });
-
-  if (mode === 'subscribe' && token === verifyToken) {
-    console.log('✅ WhatsApp Webhook verified successfully');
-    // Must respond with plain text challenge — NOT JSON
-    return res.status(200).send(challenge);
-  }
-
-  console.warn('❌ Webhook verification failed — token mismatch');
-  return res.status(403).json({ error: 'Webhook verification failed. Token mismatch.' });
+  return res.sendStatus(200);
 };
 
 // ─────────────────────────────────────────────
-// 4b. Webhook POST — Delivery Status Updates
+// 4b. Webhook POST — Delivery Status Updates (Fast2SMS format)
 // POST /api/whatsapp/webhook
+// Fast2SMS payload: { message_id, phone, status: 'sent'|'delivered'|'read'|'failed', error_message? }
 // ─────────────────────────────────────────────
 
 const handleWebhookPost = async (req, res) => {
   try {
-    const body = req.body;
+    const { message_id, status, error_message } = req.body;
 
-    if (body.object !== 'whatsapp_business_account') {
-      return res.sendStatus(404);
+    if (!message_id || !status) {
+      return res.sendStatus(200); // Ignore malformed payloads
     }
 
-    const entries = body.entry || [];
-    for (const entry of entries) {
-      for (const change of (entry.changes || [])) {
-        for (const status of (change.value?.statuses || [])) {
-          const messageId = status.id;
-          const statusType = status.status; // sent, delivered, read, failed
+    console.log(`📨 Webhook POST — MsgID: ${message_id}, Status: ${status}`);
 
-          console.log(`📨 Webhook POST — MsgID: ${messageId}, Status: ${statusType}`);
-
-          try {
-            const otpRecord = await Otp.findOne({ where: { whatsappMessageId: messageId } });
-            if (otpRecord) {
-              otpRecord.deliveryStatus = statusType;
-              if (statusType === 'failed' && status.errors?.length > 0) {
-                otpRecord.deliveryError = status.errors[0]?.title || 'Delivery failed';
-              }
-              await otpRecord.save();
-              console.log(`✅ OTP status updated — Phone: ${otpRecord.phone}, Status: ${statusType}`);
-            }
-          } catch (dbErr) {
-            console.error('Error updating OTP delivery status:', dbErr.message);
-          }
+    try {
+      const otpRecord = await Otp.findOne({ where: { whatsappMessageId: message_id } });
+      if (otpRecord) {
+        otpRecord.deliveryStatus = status;
+        if (status === 'failed' && error_message) {
+          otpRecord.deliveryError = error_message;
         }
+        await otpRecord.save();
+        console.log(`✅ OTP status updated — Phone: ${otpRecord.phone}, Status: ${status}`);
       }
+    } catch (dbErr) {
+      console.error('Error updating OTP delivery status:', dbErr.message);
     }
 
-    // Always respond 200 quickly — Meta will retry if you don't
     return res.sendStatus(200);
   } catch (error) {
     console.error('Webhook POST error:', error);
