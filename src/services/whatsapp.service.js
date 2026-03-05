@@ -10,14 +10,16 @@ const FAST2SMS_BASE_URL = 'https://www.fast2sms.com/dev';
 
 const getFast2SMSConfig = () => {
   const apiKey = process.env.FAST2SMS_API_KEY;
+  const phoneNumberId = process.env.FAST2SMS_PHONE_NUMBER_ID;
+  const messageId = process.env.FAST2SMS_MESSAGE_ID;
   const templateName = process.env.FAST2SMS_OTP_TEMPLATE_NAME || 'otp_verification';
   const templateLanguage = process.env.FAST2SMS_OTP_TEMPLATE_LANGUAGE || 'en';
-  return { apiKey, templateName, templateLanguage };
+  return { apiKey, phoneNumberId, messageId, templateName, templateLanguage };
 };
 
 const isWhatsAppConfigured = () => {
-  const { apiKey } = getFast2SMSConfig();
-  return !!apiKey;
+  const { apiKey, phoneNumberId, messageId } = getFast2SMSConfig();
+  return !!(apiKey && phoneNumberId && messageId);
 };
 
 /**
@@ -65,6 +67,55 @@ const callFast2SMS = async (payload) => {
   throw new Error(errorMsg);
 };
 
+/**
+ * Fast2SMS "Send Template Message (Simple)" API.
+ * Required query params:
+ * - authorization
+ * - message_id
+ * - phone_number_id
+ * - numbers
+ * - variables_values (if template has variables)
+ */
+const callFast2SMSTemplateSimple = async ({ numbers, variablesValues }) => {
+  const { apiKey, phoneNumberId, messageId } = getFast2SMSConfig();
+
+  if (!apiKey || !phoneNumberId || !messageId) {
+    throw new Error(
+      'WhatsApp is not configured. Set FAST2SMS_API_KEY, FAST2SMS_PHONE_NUMBER_ID, and FAST2SMS_MESSAGE_ID in .env'
+    );
+  }
+
+  const params = new URLSearchParams({
+    authorization: apiKey,
+    message_id: String(messageId),
+    phone_number_id: String(phoneNumberId),
+    numbers: String(numbers),
+  });
+
+  if (variablesValues != null && `${variablesValues}`.trim() !== '') {
+    params.set('variables_values', String(variablesValues));
+  }
+
+  const url = `${FAST2SMS_BASE_URL}/whatsapp?${params.toString()}`;
+  const response = await fetch(url, { method: 'GET' });
+  const data = await response.json();
+
+  const isSuccess = response.ok && (data.return === true || data.status === true);
+  if (isSuccess) {
+    const requestId = data.request_id || data.message_id || data?.data?.message_id || null;
+    return { success: true, messageId: requestId };
+  }
+
+  const fieldErrors = data?.errors
+    ? Object.entries(data.errors)
+        .map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(', ') : value}`)
+        .join(' | ')
+    : '';
+
+  const errorMsg = fieldErrors || data?.message || data?.error || data?.error_message || 'Fast2SMS API request failed';
+  throw new Error(errorMsg);
+};
+
 // ─────────────────────────────────────────────
 // 1. OTP — Send via Authentication Template
 // ─────────────────────────────────────────────
@@ -78,20 +129,12 @@ const callFast2SMS = async (payload) => {
  * @returns {Promise<{ success, messageId, provider }>}
  */
 const sendOtpViaWhatsApp = async (phone, otp) => {
-  const { templateName, templateLanguage } = getFast2SMSConfig();
   const normalizedPhone = normalizePhone(phone);
 
   try {
-    const result = await callFast2SMS({
-      phone_number: normalizedPhone,
-      template_name: templateName,
-      template_language: templateLanguage,
-      components: [
-        {
-          type: 'body',
-          parameters: [{ type: 'text', text: String(otp) }],
-        },
-      ],
+    const result = await callFast2SMSTemplateSimple({
+      numbers: normalizedPhone,
+      variablesValues: String(otp),
     });
 
     console.log('✅ WhatsApp OTP sent to:', normalizedPhone, '| MsgID:', result.messageId);
